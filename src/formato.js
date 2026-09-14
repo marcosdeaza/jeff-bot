@@ -35,6 +35,7 @@ function dia(fechaISO, estado, clases, cabecera, sufijo) {
   if (estado.tipo === 'festivo')    return `${cab} Es festivo (${estado.nombre}), no hay clase.`;
   if (estado.tipo === 'vacaciones') return `${cab} Estás de ${estado.nombre}, no hay clase.`;
   if (estado.tipo === 'finde')      return `${cab} Es fin de semana, no hay clase.`;
+  if (estado.tipo === 'examenes')   return `${cab} Estás en ${estado.nombre}, no hay clases normales. Escribe exámenes para ver lo que tienes apuntado.`;
   if (estado.tipo === 'fuera')      return `${cab} Estamos fuera del período lectivo.`;
   if (!clases.length)               return `${cab} No tienes clase.`;
   return `${cab}${sufijo ? ' ' + sufijo : ''}\n\n${lista(clases)}`;

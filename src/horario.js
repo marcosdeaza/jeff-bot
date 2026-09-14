@@ -216,6 +216,10 @@ function estadoDelDia(iso) {
   if (vac) return { tipo: 'vacaciones', nombre: vac.nombre };
   const dow = diaSemana(iso);
   if (dow === 0 || dow === 6) return { tipo: 'finde', nombre: DIAS[dow] };
+  // Los períodos de exámenes no son clase, pero tampoco son "fuera de curso":
+  // es justo cuando más falta hace saber en qué se está.
+  const ex = examenesDe(iso);
+  if (ex) return { tipo: 'examenes', nombre: ex.nombre, fin: ex.fin };
   if (!semestreDe(iso)) return { tipo: 'fuera', nombre: 'fuera de período lectivo' };
   return { tipo: 'lectivo', nombre: DIAS[dow] };
 }
