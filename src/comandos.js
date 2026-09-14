@@ -233,7 +233,10 @@ function manejarAnadir(jid, a) {
   const sem = H.semestreDe(hoy);
 
   if (a.tipo === 'anadir-incompleto') {
-    return { texto: `Para añadir ${a.asignatura} me falta ${a.falta}.\n\nEscríbelo así:\nponme ${a.asignatura} los martes de 16:30 a 18:30 en VH09` };
+    // Se guarda a la espera de que complete: si no, al responder "los jueves a
+    // las 9" ya no habría forma de saber de qué asignatura hablaba.
+    pendientes.set(jid, { parcial: { asignatura: a.asignatura }, ts: Date.now() });
+    return { texto: `Vale, ${a.asignatura}. Me falta ${a.falta}.\n\nDímelo tal cual, por ejemplo:\nlos martes a las 16:30 en el aula 205` };
   }
 
   if (a.tipo === 'recuperar') {
@@ -299,7 +302,27 @@ async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
 
   // 1) ¿Está respondiendo a una pregunta de alcance?
   const pend = pendientes.get(jid);
-  if (pend) {
+  if (pend && pend.parcial) {
+    if (Date.now() - pend.ts > VIDA_PENDIENTE) {
+      pendientes.delete(jid);
+    } else if (/^(no|nada|dejalo|olvidalo|cancelar)\b/i.test(I.n(t))) {
+      pendientes.delete(jid);
+      return { texto: 'Vale, lo dejo.' };
+    } else {
+      // Se reconstruye la frase entera con el nombre que ya se conocía.
+      const completo = I.anadir(`ponme ${pend.parcial.asignatura} ${t}`);
+      if (completo && completo.tipo === 'anadir') {
+        pendientes.delete(jid);
+        return manejarAnadir(jid, completo);
+      }
+      if (completo && completo.tipo === 'anadir-incompleto') {
+        pendientes.set(jid, { parcial: pend.parcial, ts: Date.now() });
+        return { texto: `Sigo sin ${completo.falta} de ${pend.parcial.asignatura}.\n\nPor ejemplo: los martes a las 16:30 en el aula 205` };
+      }
+    }
+  }
+
+  if (pend && !pend.parcial) {
     if (Date.now() - pend.ts > VIDA_PENDIENTE) pendientes.delete(jid);
     else {
       const alc = I.alcance(t);

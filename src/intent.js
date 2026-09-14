@@ -258,7 +258,7 @@ function anadir(texto) {
     if (mv) libre = cortarNombre(mv[mv.length - 1]);
   }
   if (libre) {
-    libre = libre.replace(/\b(llamad[ao]|una|un|asignatura|optativa|clase)\b/gi, '').replace(/\s+/g, ' ').trim();
+    libre = libre.replace(/\b(llamad[ao]|una|un|nuev[ao]|otra|otro|asignatura|optativa|obligatoria|materia|clase)\b/gi, '').replace(/\s+/g, ' ').trim();
     if (libre) libre = libre[0].toUpperCase() + libre.slice(1);
   }
 

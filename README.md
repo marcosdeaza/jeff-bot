@@ -64,7 +64,7 @@ salida se filtra después para retirar cualquier adorno que reintroduzca.
 | Días libres | `festivos` |
 | Quitar una asignatura | `no curso <asignatura>` |
 | Recuperar una propia | `yo sí curso <asignatura>` |
-| Alta manual | `tengo una asignatura llamada <X> en el aula <Y> los <días> a las <hora>` |
+| Alta manual | `tengo una asignatura nueva llamada <X> en el aula <Y> los <días> a las <hora>` |
 | Asistencia parcial | `solo voy <días>` |
 | Corregir aula | `el aula de <X> es <Y>` |
 | Corregir hora | `<X> pasa a las <hora>` |
@@ -74,6 +74,9 @@ salida se filtra después para retirar cualquier adorno que reintroduzca.
 
 Acepta varios días en una frase, avisa si la clase nueva se solapa con otra, y
 el aula puede llamarse como sea: `205`, `B12`, `VH09`, `Lab 3`.
+
+Si faltan datos los pide y recuerda de qué asignatura se hablaba, así que se
+puede dar el nombre primero y el horario después, en mensajes distintos.
 
 Absorbe cómo se escribe de verdad: argot (`q`, `xq`, `pa`), muletillas (`dime`,
 `oye`, `porfa`) y números dictados por voz, de modo que "la VG treinta no es la
