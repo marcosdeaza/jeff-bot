@@ -129,6 +129,11 @@ async function main() {
     }
   }, 15000);
 
+  // Devuelve el modelo preferente en cuanto vuelva a estar sano
+  setInterval(() => {
+    ia.probarApartados().catch(e => log.warn(`sondeo de modelos: ${e.message}`));
+  }, cfg.SONDEO_MODELO_MS);
+
   // Latido en disco que lee el healthcheck de Docker
   const fs = require('fs');
   setInterval(() => {

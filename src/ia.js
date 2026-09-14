@@ -45,6 +45,49 @@ function modeloEnUso() {
   return null;
 }
 
+// Sondeo baratísimo: un token. Sirve para saber si un modelo apartado ya
+// responde, sin esperar a que lo descubra un usuario esperando en pantalla.
+async function sondear(m) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const ok = await Promise.race([
+      (async () => {
+        const res = await fetch(cfg.DEEPSEEK_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.DEEPSEEK_KEY}` },
+          body: JSON.stringify({ model: m, messages: [{ role: 'user', content: 'ok' }], max_tokens: 1 }),
+          signal: ctrl.signal,
+        });
+        await res.arrayBuffer();        // vacía el cuerpo para liberar la conexión
+        return res.ok;
+      })(),
+      new Promise((_, rech) => setTimeout(() => rech(new Error('timeout')), 8500)),
+    ]);
+    clearTimeout(to);
+    return ok === true;
+  } catch (e) {
+    clearTimeout(to);
+    try { ctrl.abort(); } catch (_) {}
+    return false;
+  }
+}
+
+// Recupera el modelo preferente en cuanto vuelva, sin esperar a que expire la
+// pausa ni hacer que un usuario pague el plazo para descubrirlo.
+async function probarApartados() {
+  const enUso = modeloEnUso();
+  for (const m of MODELOS) {
+    if (m === enUso) return;            // ya se usa el mejor disponible
+    if (!apartados.has(m)) continue;
+    if (await sondear(m)) {
+      apartados.delete(m);
+      log.info(`${m} vuelve a responder; lo recupero`);
+      return;
+    }
+  }
+}
+
 function apartarModelo(m, motivo) {
   apartados.set(m, Date.now() + cfg.PAUSA_MODELO_MS);
   const siguiente = modeloEnUso();
@@ -353,4 +396,4 @@ async function transcribir(buffer, mimetype) {
   } catch (e) { log.error(`transcripción: ${e.message}`); return null; }
 }
 
-module.exports = { preguntar, transcribir, contextoHorario, cargarPersonalidad, estadoIA, TARIFA };
+module.exports = { preguntar, transcribir, contextoHorario, cargarPersonalidad, estadoIA, probarApartados, TARIFA };

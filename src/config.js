@@ -22,7 +22,10 @@ module.exports = {
   // Suplente para cuando el principal deja de responder. Es de razonamiento:
   // más caro y lento, pero mantiene la conversación en pie.
   MODELO_RESERVA: process.env.DEEPSEEK_MODEL_RESERVA || 'deepseek-v4-pro',
-  PAUSA_MODELO_MS: Number(process.env.PAUSA_MODELO_MS || 5 * 60 * 1000),
+  // Un modelo averiado queda fuera media hora. No se espera a que expire: un
+  // sondeo de fondo lo devuelve en cuanto responde, sin que nadie lo sufra.
+  PAUSA_MODELO_MS: Number(process.env.PAUSA_MODELO_MS || 30 * 60 * 1000),
+  SONDEO_MODELO_MS: Number(process.env.SONDEO_MODELO_MS || 2 * 60 * 1000),
   DEEPSEEK_KEY: process.env.DEEPSEEK_API_KEY || '',
   GROQ_API: 'https://api.groq.com/openai/v1/audio/transcriptions',
   GROQ_KEY: process.env.GROQ_API_KEY || '',
