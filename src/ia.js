@@ -174,23 +174,46 @@ function clave(jid, texto, huella) {
   return crypto.createHash('sha1').update(`${jid}|${huella}|${texto.toLowerCase().trim()}`).digest('hex');
 }
 
-// Serializa el horario YA RESUELTO del usuario: el LLM solo ve lo que le toca.
+// Serializa el horario YA RESUELTO del usuario, LOS DOS SEMESTRES. Con solo el
+// actual, una pregunta por un día de febrero hecha en septiembre no tenía
+// respuesta posible, y el modelo acababa improvisando fechas.
 function contextoHorario(jid, iso) {
-  const { sem, clases } = H.resolverSemestre(jid, iso);
-  if (!sem) return { texto: 'Fuera de período lectivo.', huella: 'na' };
-  const porDia = {};
-  for (const c of clases) (porDia[c.dia] ||= []).push(c);
-  let out = `SEMESTRE ${sem.n} (${sem.inicio} a ${sem.fin}) — HORARIO EFECTIVO DE ESTE ESTUDIANTE:\n`;
-  for (let d = 1; d <= 5; d++) {
-    const cs = porDia[d] || [];
-    out += `\n${H.DIAS[d].toUpperCase()}: ${cs.length ? '' : 'sin clases'}\n`;
-    for (const c of cs) {
-      out += `  ${c.inicio}-${c.fin} | ${c.asignatura} | ${c.edificio} (${c.aula})`;
-      if (c.cancelada) out += ' | ANULADA';
-      if (c._cambiado) out += ` | modificado(${c._scope})`;
-      out += '\n';
+  const actual = H.semestreDe(iso);
+  let out = '';
+
+  for (const sem of H.calendario.semestres) {
+    // Una fecha dentro de ese semestre, para que el resolver aplique los
+    // cambios que corresponden a ese periodo.
+    const { clases } = H.resolverSemestre(jid, sem.inicio);
+    const porDia = {};
+    for (const c of clases) (porDia[c.dia] ||= []).push(c);
+    const asignaturas = [...new Set(clases.filter(c => !c.cancelada).map(c => c.asignatura))];
+
+    out += `\n=== SEMESTRE ${sem.n} (${sem.inicio} a ${sem.fin})`;
+    out += actual && actual.n === sem.n ? ' — ES EL QUE CURSA AHORA ===\n' : ' ===\n';
+    out += `Asignaturas: ${asignaturas.join(', ')}\n`;
+    for (let d = 1; d <= 5; d++) {
+      const cs = porDia[d] || [];
+      out += `${H.DIAS[d].toUpperCase()}: ${cs.length ? '' : 'sin clases'}\n`;
+      for (const c of cs) {
+        out += `  ${c.inicio}-${c.fin} | ${c.asignatura} | ${c.edificio} (${c.aula})`;
+        if (c.cancelada) out += ' | ANULADA';
+        if (c._cambiado) out += ` | modificado(${c._scope})`;
+        out += '\n';
+      }
     }
   }
+
+  out += `\n=== CALENDARIO (no inventes fechas, usa estas) ===\n`;
+  for (const [f, n] of Object.entries(H.calendario.festivos)) out += `Festivo ${f}: ${n}\n`;
+  for (const v of H.calendario.vacaciones) out += `${v.nombre}: ${v.inicio} a ${v.fin}\n`;
+  for (const e of H.calendario.examenes) out += `${e.nombre}: ${e.inicio} a ${e.fin}\n`;
+
+  out += `\nCOMO SE LLAMAN LOS SEMESTRES: el estudiante cursa 2o de carrera, asi que
+el SEMESTRE 1 de aqui es tambien "primer semestre" o "tercer semestre" (de la
+carrera), y el SEMESTRE 2 es "segundo semestre" o "cuarto semestre". Si pregunta
+por el "semestre que viene" estando en el 1, se refiere al 2.\n`;
+
   return { texto: out, huella: crypto.createHash('md5').update(out).digest('hex').slice(0, 8) };
 }
 
@@ -201,7 +224,8 @@ function contextoCalendario(iso) {
     .map(([f, n]) => `${f}: ${n}`).join(' · ');
   return `Hoy es ${iso} (${est.nombre}${est.tipo !== 'lectivo' ? ', ' + est.tipo : ''}).`
     + (sn ? ` Semana ${sn.semana} del semestre ${sn.semestre}.` : '')
-    + (prox ? `\nPróximos festivos: ${prox}` : '');
+    + (prox ? `\nPróximos festivos: ${prox}` : '')
+    + `\nPuedes responder por cualquier fecha del curso, no solo por el semestre actual.`;
 }
 
 async function preguntar(jid, texto, opts = {}) {

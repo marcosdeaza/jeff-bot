@@ -57,6 +57,9 @@ salida se filtra después para retirar cualquier adorno que reintroduzca.
 | Intención | Formas admitidas |
 | --- | --- |
 | Clases de un día | `hoy`, `mañana`, `el viernes`, `pasado mañana` |
+| Una fecha concreta | `el 12 de abril`, `qué toca el 10 de febrero`, `3/03` |
+| Un semestre entero | `asignaturas del segundo semestre`, `del semestre que viene` |
+| El curso completo | `todas mis asignaturas`, `cuántas tengo en total` |
 | Momento actual | `ahora`, `siguiente`, `y la de después` |
 | Lo que resta del día | `lo que queda`, `las que quedan` |
 | Vista semanal | `semana` |
@@ -81,6 +84,12 @@ puede dar el nombre primero y el horario después, en mensajes distintos.
 Absorbe cómo se escribe de verdad: argot (`q`, `xq`, `pa`), muletillas (`dime`,
 `oye`, `porfa`) y números dictados por voz, de modo que "la VG treinta no es la
 VG cero cinco" equivale a escribirlo con cifras.
+
+Responde por cualquier fecha del curso, no solo por el semestre en marcha: en
+septiembre sabe decir qué toca un lunes de abril. El año de una fecha sin año se
+deduce del calendario académico, así que "12 de abril" en un curso que empieza en
+septiembre cae en el año natural siguiente. Y un semestre se nombra de las dos
+maneras: en segundo de carrera, el primer semestre es también el tercero.
 
 ---
 

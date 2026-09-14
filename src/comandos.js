@@ -117,6 +117,50 @@ function responderConsulta(jid, intencion) {
       return `${cab}\n\n${fmt.lista(quedan)}`;
     }
 
+    case 'fechaexacta': {
+      const f = intencion.iso;
+      const { estado, clases } = H.clasesDeDia(jid, f);
+      const d = H.DIAS[H.diaSemana(f)];
+      const [y, m, dd] = f.split('-');
+      const MES = ['', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+                   'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][+m];
+      const cab = `El ${d} ${+dd} de ${MES} de ${y}`;
+      const sem = H.semestreDe(f);
+      const extra = sem ? ` (semestre ${sem.n})` : '';
+      return fmt.dia(f, estado, clases, cab + extra, 'tienes:');
+    }
+
+    case 'todas': {
+      const partes = [];
+      let total = 0;
+      for (const sem of H.calendario.semestres) {
+        const { clases } = H.resolverSemestre(jid, sem.inicio);
+        const asigs = [...new Set(clases.filter(c => !c.cancelada).map(c => fmt.nombre(c.asignatura)))];
+        total += asigs.length;
+        const actual = H.semestreDe(hoy);
+        const marca = actual && actual.n === sem.n ? ' (el de ahora)' : '';
+        partes.push(`*Semestre ${sem.n}*${marca}\n${asigs.join('\n')}`);
+      }
+      return `Tienes *${total} asignaturas* en el curso.\n\n${partes.join('\n\n')}`;
+    }
+
+    case 'semestre': {
+      const s2 = H.calendario.semestres.find(x => x.n === intencion.n);
+      if (!s2) return 'No tengo ese semestre.';
+      const { clases } = H.resolverSemestre(jid, s2.inicio);
+      const porDia = {};
+      for (const c of clases) (porDia[c.dia] ||= []).push(c);
+      const asigs = [...new Set(clases.filter(c => !c.cancelada).map(c => fmt.nombre(c.asignatura)))];
+      const actual = H.semestreDe(hoy);
+      const esActual = actual && actual.n === s2.n;
+      const otroNombre = s2.n === 1 ? 'primer o tercer semestre' : 'segundo o cuarto semestre';
+      return `*Semestre ${s2.n}* (${otroNombre})\n`
+        + `Del ${s2.inicio.split('-').reverse().join('/')} al ${s2.fin.split('-').reverse().join('/')}`
+        + (esActual ? ', el que cursas ahora' : '') + '.\n\n'
+        + `*${asigs.length} asignaturas*\n${asigs.join('\n')}\n\n`
+        + fmt.semana(porDia);
+    }
+
     case 'semananum': {
       const sn = H.semanaDe(hoy);
       return sn ? `Semana *${sn.semana}* del semestre *${sn.semestre}*.` : 'Fuera del período lectivo.';
@@ -133,8 +177,8 @@ function responderConsulta(jid, intencion) {
       const prox = Object.entries(H.calendario.festivos).filter(([f]) => f >= hoy);
       const vac = H.calendario.vacaciones.filter(v => v.fin >= hoy);
       let s = 'Próximos días libres:\n';
-      for (const [f, n] of prox.slice(0, 5)) s += `\n${corto(f)} — ${n}`;
-      for (const v of vac.slice(0, 4)) s += `\n${corto(v.inicio)}–${corto(v.fin)} — ${v.nombre}`;
+      for (const [f, n] of prox) s += `\n${corto(f)} — ${n}`;
+      for (const v of vac) s += `\n${corto(v.inicio)}–${corto(v.fin)} — ${v.nombre}`;
       return s;
     }
 

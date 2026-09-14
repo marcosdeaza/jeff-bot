@@ -71,6 +71,21 @@ function consulta(texto) {
   if (/^(deshacer|undo|revertir|quitar ultimo)\b/.test(t)) return { tipo: 'deshacer' };
   if (/^(resetear|reset|restaurar|volver al horario oficial)\b/.test(t)) return { tipo: 'reset' };
 
+  // El curso entero: las asignaturas de los dos semestres.
+  if (/\b(todas? (mis |las )?asignaturas|todo el curso|asignaturas del curso|cuantas asignaturas|asignaturas en total|todas las clases del curso)\b/.test(t)) {
+    return { tipo: 'todas' };
+  }
+
+  // Un semestre concreto pedido por su nombre, en cualquiera de las dos formas.
+  const sem = semestreMencionado(t);
+  if (sem && /\b(asignatura|asignaturas|horario|clases|tengo|toca|cursa|curso|hay)\b/.test(t)) {
+    return { tipo: 'semestre', n: sem };
+  }
+
+  // Una fecha concreta del curso, aunque sea de otro semestre.
+  const iso = fechaExacta(texto);
+  if (iso) return { tipo: 'fechaexacta', iso };
+
   // Más específico que las reglas de día: "lo que queda hoy" contiene "hoy",
   // así que debe resolverse antes o se lo come la regla de la fecha.
   if (/\b(lo que queda|las que queden|las que quedan|las que faltan|que me queda|que queda|me falta|restantes|quedan)\b/.test(t)) return { tipo: 'restantes' };
@@ -291,6 +306,59 @@ function sumarDosHoras(hhmm) {
   return `${String((h + 2) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+
+// ---------- FECHAS CONCRETAS Y SEMESTRES ----------
+const MESES = {
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7,
+  agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
+};
+
+// "12 de abril", "3 de marzo de 2027", "12/04", "12-04-2027".
+// El año se deduce del curso: los meses anteriores a su inicio caen en el
+// siguiente año natural, que es como se habla de un curso académico.
+function fechaExacta(texto) {
+  const t = n(texto);
+  let dia = null, mes = null, anio = null;
+
+  let m = t.match(/\b(\d{1,2})\s+de\s+([a-z]+)(?:\s+de(?:l)?\s+(\d{4}))?/);
+  if (m && MESES[m[2]]) { dia = +m[1]; mes = MESES[m[2]]; anio = m[3] ? +m[3] : null; }
+
+  if (!mes) {
+    m = t.match(/\b(\d{1,2})[\/](\d{1,2})(?:[\/](\d{2,4}))?\b/);
+    if (m) { dia = +m[1]; mes = +m[2]; anio = m[3] ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : null; }
+  }
+
+  if (!mes || !dia || dia < 1 || dia > 31 || mes < 1 || mes > 12) return null;
+
+  if (!anio) {
+    const [y0, m0] = H.calendario.semestres[0].inicio.split('-').map(Number);
+    anio = mes >= m0 ? y0 : y0 + 1;
+  }
+  const iso = `${anio}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+  const [yy, mm, dd] = iso.split('-').map(Number);
+  const d = new Date(Date.UTC(yy, mm - 1, dd));
+  if (d.getUTCMonth() + 1 !== mm || d.getUTCDate() !== dd) return null;   // 31 de febrero
+  return iso;
+}
+
+// El estudiante cursa 2o, así que su semestre 1 es también el "tercero" de la
+// carrera y el 2 el "cuarto". Ambas formas deben valer.
+function semestreMencionado(texto, isoHoy) {
+  const t = n(texto);
+  if (!/\b(semestre|cuatrimestre|cuatri)\b/.test(t)) return null;
+
+  const actual = H.semestreDe(isoHoy || H.hoyISO());
+  if (/\b(que viene|proximo|siguiente|el otro|despues)\b/.test(t)) {
+    return actual && actual.n === 1 ? 2 : 1;
+  }
+  if (/\b(este|actual|en el que estoy|de ahora)\b/.test(t) && actual) return actual.n;
+  if (/\b(primer|primero|1er|1o|tercer|tercero|3er|3o)\b/.test(t)) return 1;
+  if (/\b(segundo|2o|2do|cuarto|4o|4to)\b/.test(t)) return 2;
+  if (/\b(semestre|cuatrimestre)\s*(1|3)\b/.test(t)) return 1;
+  if (/\b(semestre|cuatrimestre)\s*(2|4)\b/.test(t)) return 2;
+  return null;
+}
+
 // ---------- 3. RESPUESTA AL ALCANCE ----------
 function alcance(texto) {
   const t = n(texto);
@@ -300,4 +368,4 @@ function alcance(texto) {
   return null;
 }
 
-module.exports = { consulta, consultaDebil, cambio, anadir, alcance, asignaturaMencionada, diasMencionados, digitalizar, n };
+module.exports = { consulta, consultaDebil, cambio, anadir, alcance, fechaExacta, semestreMencionado, asignaturaMencionada, diasMencionados, digitalizar, n };
