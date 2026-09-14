@@ -71,6 +71,10 @@ function consulta(texto) {
   if (/^(deshacer|undo|revertir|quitar ultimo)\b/.test(t)) return { tipo: 'deshacer' };
   if (/^(resetear|reset|restaurar|volver al horario oficial)\b/.test(t)) return { tipo: 'reset' };
 
+  // Más específico que las reglas de día: "lo que queda hoy" contiene "hoy",
+  // así que debe resolverse antes o se lo come la regla de la fecha.
+  if (/\b(lo que queda|las que queden|las que quedan|las que faltan|que me queda|que queda|me falta|restantes|quedan)\b/.test(t)) return { tipo: 'restantes' };
+
   if (/\b(ahora|en este momento|que toca ahora)\b/.test(t)) return { tipo: 'ahora' };
   if (/\b(siguiente|proxima clase|proxima|que toca luego|luego)\b/.test(t)) return { tipo: 'siguiente' };
   if (/\b(pasado manana)\b/.test(t)) return { tipo: 'fecha', offset: 2 };
@@ -86,9 +90,6 @@ function consulta(texto) {
   // cada "hola", que es de lo más frecuente que recibe un bot.
   if (/^(hola|buenas|hey|ey|holi|buenos dias|buenas tardes|buenas noches|que tal|jeff)\b/.test(t) && t.split(/\s+/).length <= 4) return { tipo: 'saludo' };
   if (/^(gracias|grac[ia]s|thx|ok|vale|genial|perfecto|guay)\b/.test(t) && t.split(/\s+/).length <= 3) return { tipo: 'gracias' };
-
-  // "lo que queda": solo las clases que aún no han empezado hoy.
-  if (/\b(lo que queda|las que queden|las que quedan|las que faltan|que me queda|que queda|me falta|restantes|quedan)\b/.test(t)) return { tipo: 'restantes' };
 
   // Continuaciones: "y la de después", "y luego"
   if (/^(y (la )?(de )?(despues|luego|siguiente|la otra)|y luego|y despues|y ahora)\b/.test(t)) return { tipo: 'siguiente' };
