@@ -80,12 +80,15 @@ async function onMensaje(msg, conn) {
     r = await comandos.manejar(jid, texto, { esAudio, sesion: getSesion(jid) });
   } catch (e) {
     log.error(`manejar: ${e.stack}`);
-    r = { texto: 'Algo ha fallado. Prueba otra vez.' };
+    r = { texto: 'Algo ha fallado. Prueba otra vez.', noGuardar: true };
   }
   if (!r || !r.texto) return;
 
   await conn.enviar(jid, { text: r.texto });
-  anotar(jid, texto, r.texto);
+  // Un aviso de error NO entra en el historial: el modelo recibe las últimas
+  // respuestas como suyas, y si ve un "algo ha fallado" lo repite creyendo que
+  // es lo que toca decir. Un fallo puntual se convertía así en permanente.
+  if (!r.noGuardar) anotar(jid, texto, r.texto);
   log.info(`respondido a ${quien}`);
 
   // Un cambio global avisa al resto de la clase

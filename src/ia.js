@@ -328,8 +328,12 @@ ${datos}
 === MOMENTO ACTUAL (lo único que cambia entre consultas) ===
 ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA: mensaje transcrito de un audio; puede tener erratas, interpreta por contexto.' : ''}`;
 
+  // Red de seguridad: si algún aviso de error llegó a colarse en el historial,
+  // no se le pasa al modelo, que si no lo toma por respuesta válida y lo repite.
+  const AVISOS = /^(algo ha fallado|no he podido procesar|se me ha cruzado|error )/i;
   const mensajes = [{ role: 'system', content: system }];
   for (const h of historial.slice(-6)) {
+    if (h.rol !== 'user' && AVISOS.test((h.texto || '').trim())) continue;
     mensajes.push({ role: h.rol === 'user' ? 'user' : 'assistant', content: h.texto });
   }
   mensajes.push({ role: 'user', content: texto });

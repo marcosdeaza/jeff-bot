@@ -406,7 +406,7 @@ async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
   // 7) libre -> LLM con SU horario resuelto
   const r = await ia.preguntar(jid, t, { historial: sesion?.historial || [], esAudio });
   if (r) return { texto: r };
-  return { texto: 'No he podido procesar eso. Prueba con hoy, mañana o ayuda.' };
+  return { texto: 'No he podido procesar eso. Prueba con hoy, mañana o ayuda.', noGuardar: true };
 }
 
 function detectarEvento(t) {
