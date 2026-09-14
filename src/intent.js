@@ -3,7 +3,24 @@
 //  2) detectar PROPUESTAS DE CAMBIO para preguntar el alcance (yo / todos)
 const H = require('./horario');
 
-const n = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+// Los estudiantes escriben en argot. Expandirlo aquí evita mandar al modelo
+// mensajes que en realidad son consultas triviales.
+const ARGOT = [
+  [/\bq\b/g, 'que'], [/\bk\b/g, 'que'], [/\bxq\b/g, 'porque'], [/\bpq\b/g, 'porque'],
+  [/\bpa\b/g, 'para'], [/\btb\b/g, 'tambien'], [/\btmb\b/g, 'tambien'],
+  [/\bdnd\b/g, 'donde'], [/\bpf\b/g, 'porfa'], [/\bxfa\b/g, 'porfa'],
+  [/\bhy\b/g, 'hoy'], [/\bmñn\b/g, 'manana'], [/\bsig\b/g, 'siguiente'],
+];
+
+const n = s => {
+  let x = (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  for (const [re, rep] of ARGOT) x = x.replace(re, rep);
+  return x.replace(/\s+/g, ' ');
+};
+
+// Muletillas al principio: "dime qué toca hoy" es exactamente "hoy".
+const MULETILLAS = /^(?:(?:oye|eh|hey|porfa|porfavor|por favor|jeff|bot)\s+)*(?:(?:me\s+)?(?:dime|dile|dices|puedes decirme|puedes decir|sabes|saber|mira|ver|enseñame|ensename|muestrame|pon|dame)\s+)*(?:(?:que|cual|cuales|cuanto|cuando|como|donde)\s+(?:es|son|hay|toca|tocan|tengo|tienes)\s+)?/;
+const sinMuletillas = t => t.replace(MULETILLAS, '').trim() || t;
 
 // El audio transcrito escribe los números en letra: "VG treinta" -> "VG30"
 const NUM = {
@@ -45,11 +62,12 @@ function asignaturaMencionada(t) {
 
 // ---------- 1. INTENCIONES DE CONSULTA (respuesta local) ----------
 function consulta(texto) {
-  const t = n(texto);
-  if (!t) return null;
+  const t0 = n(texto);
+  if (!t0) return null;
+  const t = sinMuletillas(t0);
 
   if (/^(\/?ayuda|\/?help|\/?start|menu|que sabes hacer|que puedes hacer|comandos)\b/.test(t)) return { tipo: 'ayuda' };
-  if (/^(mis cambios|mis ajustes|que he cambiado|mi config|mis overrides)\b/.test(t)) return { tipo: 'miscambios' };
+  if (/(mis cambios|mis ajustes|que he cambiado|mi config|mis overrides|cambios que se han hecho|cambios hechos|ultimos cambios|que cambios hay|los cambios)/.test(t)) return { tipo: 'miscambios' };
   if (/^(deshacer|undo|revertir|quitar ultimo)\b/.test(t)) return { tipo: 'deshacer' };
   if (/^(resetear|reset|restaurar|volver al horario oficial)\b/.test(t)) return { tipo: 'reset' };
 
@@ -63,6 +81,20 @@ function consulta(texto) {
   if (/\b(horario completo|todo el horario|mi horario)\b/.test(t)) return { tipo: 'semana' };
   if (/\b(examenes|examen|eventos|deberes|entregas|avisos)\b/.test(t)) return { tipo: 'eventos' };
   if (/\b(que semana|en que semana)\b/.test(t)) return { tipo: 'semananum' };
+
+  // Saludos y cortesías: responder en local evita una llamada al modelo por
+  // cada "hola", que es de lo más frecuente que recibe un bot.
+  if (/^(hola|buenas|hey|ey|holi|buenos dias|buenas tardes|buenas noches|que tal|jeff)\b/.test(t) && t.split(/\s+/).length <= 4) return { tipo: 'saludo' };
+  if (/^(gracias|grac[ia]s|thx|ok|vale|genial|perfecto|guay)\b/.test(t) && t.split(/\s+/).length <= 3) return { tipo: 'gracias' };
+
+  // "lo que queda": solo las clases que aún no han empezado hoy.
+  if (/\b(lo que queda|las que queden|las que quedan|las que faltan|que me queda|que queda|me falta|restantes|quedan)\b/.test(t)) return { tipo: 'restantes' };
+
+  // Continuaciones: "y la de después", "y luego"
+  if (/^(y (la )?(de )?(despues|luego|siguiente|la otra)|y luego|y despues|y ahora)\b/.test(t)) return { tipo: 'siguiente' };
+
+  // "hora de clase", "clases", "horario" a secas -> el día de hoy
+  if (/^(hora de clase|horas de clase|clases|clase|horario|mi horario de hoy)\b/.test(t) && t.split(/\s+/).length <= 4) return { tipo: 'fecha', offset: 0 };
   if (/\b(festivos|vacaciones|puente)\b/.test(t)) return { tipo: 'festivos' };
 
   return null;
@@ -71,7 +103,7 @@ function consulta(texto) {
 // Consulta DÉBIL: ambigua con una propuesta de cambio ("... el lunes"), así que
 // el router la evalúa DESPUÉS de intentar interpretar el mensaje como cambio.
 function consultaDebil(texto) {
-  const t = n(texto);
+  const t = sinMuletillas(n(texto));
   const dias = diasMencionados(t);
   if (dias.length === 1 && /\b(que hay|que tengo|clases|horario|el|los)\b/.test(t)) return { tipo: 'diasemana', dia: dias[0] };
   if (dias.length === 1 && t.split(/\s+/).length <= 3) return { tipo: 'diasemana', dia: dias[0] };
@@ -83,6 +115,20 @@ function consultaDebil(texto) {
 function cambio(texto) {
   const raw = digitalizar(texto);
   const t = n(raw);
+
+  // "el aula de X es la 12" / "el aula de X pasa a ser B12"
+  // Acepta cualquier nombre de aula, no solo el formato de una facultad concreta.
+  const mAula = raw.match(/\baula\s+de\s+([^,.]+?)\s+(?:ya\s+)?(?:es|ser[áa]|pasa a ser|cambia a|ahora es)\s+(?:la\s+|el\s+)?([A-Za-z0-9.\-]{1,12})/i);
+  if (mAula) {
+    const asigA = asignaturaMencionada(n(mAula[1])) || mAula[1].trim();
+    const nuevaAula = mAula[2].toUpperCase().replace(/[.,]$/, '');
+    return {
+      tipo: 'aula',
+      match: { asignatura: asigA },
+      set: { edificio: nuevaAula },
+      resumen: `${asigA} pasa al aula *${nuevaAula}*`,
+    };
+  }
   const EDIF = /\b(v[gh]\s?\d{1,2})\b/gi;
   const edificios = (raw.match(EDIF) || []).map(e => e.replace(/\s+/g, '').toUpperCase());
   const asig = asignaturaMencionada(t);
@@ -150,46 +196,79 @@ function cambio(texto) {
 
 
 // ---------- 2.bis AÑADIR / RECUPERAR UNA ASIGNATURA ----------
-// Dos casos:
-//   a) "ponme álgebra"  -> la asignatura existe en el horario oficial y se la
-//      quitaron a la clase: basta con devolvérsela con sus horas reales.
-//   b) "ponme Redes los martes de 16:30 a 18:30 en VH09" -> asignatura que no
-//      está en el horario oficial (repetidor de otro curso): hace falta horario.
-const VERBOS_ANADIR = /\b(ponme|pon|ponedme|anade|anademe|anadir|agrega|agregame|dame|meteme|mete|yo si|si tengo|si curso|si la tengo|la tengo yo|yo la tengo)\b/;
-const RELLENO = /\b(los|las|el|la|de|del|a|al|en|y|un|una|clase|asignatura|horas?|aula|edificio|por|para)\b/g;
+// Acepta desde lo telegráfico ("ponme Redes") hasta lo natural
+// ("yo tengo una asignatura llamada Redes en la clase 205 los martes a las 16:30").
+// El aula puede llamarse como sea: VH09, 205, B12, "Lab 3".
+const V_FUERTE = /\b(ponme|pon|ponedme|a[ñn]ade|a[ñn][aá]deme|a[ñn]adir|agrega|agr[ée]game|dame|m[ée]teme|mete)\b/i;
+const V_DEBIL  = /\b(yo tengo|tengo|yo curso|curso|yo hago|hago|yo s[ií]|s[ií] tengo|s[ií] curso|la tengo yo|yo la tengo)\b/i;
+const MARCA_NOMBRE = /\b(llamad[ao]|asignatura|optativa)\b/i;
+
+// Corta el nombre de la asignatura donde empieza a hablarse de día, hora o aula.
+function cortarNombre(txt) {
+  const marcas = [
+    /\s+en\s+(?:la\s+|el\s+)?(?:clase|aula|laboratorio|lab|sala|edificio)\b/i,
+    /\s+en\s+/i,
+    /\s+(?:todos\s+)?los\s+(?:lunes|martes|mi[ée]rcoles|jueves|viernes)/i,
+    /\s+(?:lunes|martes|mi[ée]rcoles|jueves|viernes|s[áa]bado|domingo)\b/i,
+    /\s+a\s+las\s+/i,
+    /\s+de\s+\d{1,2}[:.]\d{2}/,
+    /\s+\d{1,2}[:.]\d{2}/,
+  ];
+  let fin = txt.length;
+  for (const m of marcas) { const i = txt.search(m); if (i >= 0 && i < fin) fin = i; }
+  return txt.slice(0, fin).replace(/^\s*(una|un|la|el)\s+/i, '').replace(/[.,;]+$/, '').trim();
+}
+
+function extraerAula(raw) {
+  let m = raw.match(/\ben\s+(?:la\s+|el\s+)?(?:clase|aula|laboratorio|lab|sala|edificio)\s+([A-Za-z0-9.\-]{1,12})/i);
+  if (m) return m[1].toUpperCase();
+  m = raw.match(/\b(v[gh]\s?\d{1,3})\b/i);                       // formato UEV
+  if (m) return m[1].replace(/\s+/g, '').toUpperCase();
+  m = raw.match(/\ben\s+(?:el\s+|la\s+)?([A-Za-z]{0,3}\s?\d{1,4})\b/i);
+  if (m) return m[1].replace(/\s+/g, '').toUpperCase();
+  return null;
+}
 
 function anadir(texto) {
   const raw = digitalizar(texto);
   const t = n(raw);
-  if (!VERBOS_ANADIR.test(t)) return null;
+
+  const fuerte = V_FUERTE.test(raw);
+  const debil = V_DEBIL.test(raw);
+  const horas = [...raw.matchAll(/\b(\d{1,2})[:.](\d{2})\b/g)].map(m => `${m[1].padStart(2, '0')}:${m[2]}`);
+  const marca = MARCA_NOMBRE.test(raw);
+
+  // Afirmación explícita ("yo sí la curso"): no hace falta hora ni más contexto.
+  const afirma = /\b(yo s[ií]|s[ií] (?:la )?(?:curso|tengo|hago)|yo (?:la )?(?:curso|tengo|hago))\b/i.test(raw);
+  // "tengo" a secas solo cuenta si hay hora o se nombra la asignatura: si no,
+  // "¿qué tengo hoy?" se interpretaría como un alta.
+  if (!fuerte && !afirma && !(debil && (horas.length || marca))) return null;
 
   const dias = diasMencionados(t);
-  const horas = [...t.matchAll(/\b(\d{1,2})[:.](\d{2})\b/g)]
-    .map(m => `${m[1].padStart(2, '0')}:${m[2]}`);
-  const aulaM = raw.match(/\b(v[gh]\s?\d{1,2})\b/i);
-  const edificio = aulaM ? aulaM[0].replace(/\s+/g, '').toUpperCase() : null;
-
+  const aula = extraerAula(raw);
   const deBase = asignaturaMencionada(t);
 
-  // Nombre libre: se extrae del texto ORIGINAL para conservar tildes y mayúsculas
-  let libre = raw
-    .replace(/\b(ponme|pon|ponedme|a[ñn]ade|a[ñn][aá]deme|a[ñn]adir|agrega|agr[ée]game|dame|m[ée]teme|mete|yo s[ií]|s[ií] tengo|s[ií] curso|s[ií] la tengo|la tengo yo|yo la tengo)\b/gi, ' ')
-    .replace(/\b(lunes|martes|mi[ée]rcoles|jueves|viernes|s[áa]bado|domingo)\b/gi, ' ')
-    .replace(/\b\d{1,2}[:.]\d{2}\b/g, ' ')
-    .replace(/\bv[gh]\s?\d{1,2}\b/gi, ' ')
-    .replace(/\b(los|las|el|la|de|del|a|al|en|y|un|una|clase|asignatura|horas?|aula|edificio|por|para)\b/gi, ' ')
-    .replace(/\s+/g, ' ').trim();
-  if (libre) libre = libre[0].toUpperCase() + libre.slice(1);
+  // Nombre: tras "llamada/asignatura", o tras el verbo
+  let libre = null;
+  let m = raw.match(/\b(?:llamad[ao]|asignatura|optativa)\s+(.+)/i);
+  if (m) libre = cortarNombre(m[1]);
+  if (!libre) {
+    const mv = raw.match(new RegExp('(?:' + V_FUERTE.source + '|' + V_DEBIL.source + ')\\s+(.+)', 'i'));
+    if (mv) libre = cortarNombre(mv[mv.length - 1]);
+  }
+  if (libre) {
+    libre = libre.replace(/\b(llamad[ao]|una|un|asignatura|optativa|clase)\b/gi, '').replace(/\s+/g, ' ').trim();
+    if (libre) libre = libre[0].toUpperCase() + libre.slice(1);
+  }
 
-  const asignatura = deBase || (libre.length > 2 ? libre : null);
+  const asignatura = deBase || (libre && libre.length > 2 ? libre : null);
   if (!asignatura) return null;
 
-  // Caso (a): está en el oficial y no se dan horas -> recuperarla tal cual
+  // Existe en el horario oficial y no se dan detalles -> recuperarla tal cual
   if (deBase && !horas.length && !dias.length) {
     return { tipo: 'recuperar', asignatura: deBase, resumen: `recuperar *${deBase}* con su horario oficial` };
   }
 
-  // Caso (b): alta manual, necesita día y hora de inicio
   if (!dias.length || !horas.length) {
     return {
       tipo: 'anadir-incompleto', asignatura,
@@ -199,9 +278,10 @@ function anadir(texto) {
 
   const inicio = horas[0];
   const fin = horas[1] || sumarDosHoras(inicio);
+  const nom = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
   return {
-    tipo: 'anadir', asignatura, dia: dias[0], inicio, fin, edificio,
-    resumen: `añadir *${asignatura}* los ${['domingo','lunes','martes','miércoles','jueves','viernes','sábado'][dias[0]]} de ${inicio} a ${fin}${edificio ? ` en ${edificio}` : ''}`,
+    tipo: 'anadir', asignatura, dias, inicio, fin, aula,
+    resumen: `añadir *${asignatura}* los ${dias.map(d => nom[d]).join(' y ')} a las ${inicio}${aula ? ` en ${aula}` : ''}`,
   };
 }
 

@@ -102,6 +102,7 @@ async function main() {
   log.info('Jeff arrancando…');
   store.asegurarDir(cfg.DATA_DIR);
 
+  H.cargarPersonalizado(log);      // data/horario.json manda sobre el incorporado
   const memoria = cargarSesiones();
   overrides.cargar();
   eventos.cargar();
@@ -111,7 +112,8 @@ async function main() {
 
   const hoy = H.hoyISO();
   const sn = H.semanaDe(hoy);
-  log.info(`hoy ${hoy} · ${sn ? `semana ${sn.semana} del S${sn.semestre}` : 'fuera de período'}`);
+  log.info(`horario: ${H.BASE.length} clases (${H.origenHorario})`);
+  log.info(`hoy ${hoy}, ${sn ? `semana ${sn.semana} del S${sn.semestre}` : 'fuera de período lectivo'}`);
 
   const conn = new Conexion({ onMensaje });
   await conn.arrancar();

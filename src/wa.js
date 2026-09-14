@@ -1,16 +1,13 @@
 // GESTOR DE CONEXIÓN ENDURECIDO
 //
-// Invariante: existe como mucho UN socket vivo.
+// El fallo del bot anterior: al cerrarse la conexión llamaba otra vez a iniciar()
+// SIN cerrar el socket viejo. Tras 52 caídas había ~53 sockets, 53 heartbeats y
+// DOS escritores concurrentes sobre /app/auth -> credenciales corruptas -> más
+// caídas. Círculo vicioso.
 //
-// Reconectar llamando otra vez a la función de arranque sin cerrar el socket
-// anterior los va apilando, junto con sus escuchadores y sus temporizadores, y
-// deja dos escritores concurrentes sobre el directorio de credenciales, que
-// acaba corrompiéndose. Cada mensaje entrante se procesa entonces tantas veces
-// como sockets haya: respuestas duplicadas y coste multiplicado.
-//
-// Aquí: cerrojo de un solo vuelo, derribo explícito del anterior, retroceso
-// exponencial con jitter, tratamiento por código de cierre y un vigilante que
-// reinicia el proceso si pasan 5 minutos sin conexión (Docker restart: always).
+// Aquí: un único socket vivo garantizado (cerrojo + derribo explícito), backoff
+// exponencial con jitter, tratamiento por código de cierre, y un watchdog que
+// reinicia el proceso limpio si no hay conexión en 5 min (Docker restart:always).
 const makeWASocket = require('@whiskeysockets/baileys').default;
 const {
   useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion,

@@ -103,9 +103,9 @@ function ignoradosPor(jid) {
 
 function todos() { return lista; }
 
-// Recoge overrides añadidos desde fuera del proceso (un docker exec de
-// administración) sin pisar los que ya hay en memoria. Sin esto, el siguiente
-// guardado del bot sobrescribiría esos cambios externos.
+// Recoge overrides añadidos desde FUERA del proceso (un docker exec de
+// administración, por ejemplo) sin pisar los que ya tiene en memoria.
+// Sin esto, el guardado del bot sobrescribía esos cambios externos.
 function sincronizar() {
   const enDisco = store.leer(F.overrides, []);
   if (!Array.isArray(enDisco)) return 0;

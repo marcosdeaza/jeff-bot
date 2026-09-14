@@ -1,7 +1,52 @@
 // RESOLVER DE CAPAS: base -> globales -> personales -> vista del usuario.
-const { clases: BASE, calendario } = require('./horario-base');
+const fs = require('fs');
+const path = require('path');
+const incorporado = require('./horario-base');
 const overrides = require('./overrides');
-const { TZ } = require('./config');
+const { TZ, DATA_DIR } = require('./config');
+
+// El horario de src/horario-base.js es el que viene de fábrica. Si existe
+// data/horario.json, manda ese: así se cambia el horario en caliente, sin tocar
+// el código ni reconstruir la imagen. Si el fichero está mal, se avisa y se
+// sigue con el incorporado en vez de dejar el bot sin horario.
+let BASE = incorporado.clases;
+let calendario = incorporado.calendario;
+let origenHorario = 'incorporado';
+
+function validar(d) {
+  if (!d || typeof d !== 'object') throw new Error('no es un objeto');
+  if (!Array.isArray(d.clases) || !d.clases.length) throw new Error('falta "clases"');
+  d.clases.forEach((c, i) => {
+    for (const campo of ['semestre', 'dia', 'inicio', 'fin', 'asignatura']) {
+      if (c[campo] === undefined) throw new Error(`clase ${i}: falta "${campo}"`);
+    }
+    if (!/^\d{1,2}:\d{2}$/.test(c.inicio) || !/^\d{1,2}:\d{2}$/.test(c.fin)) {
+      throw new Error(`clase ${i}: hora con formato inválido`);
+    }
+    if (c.dia < 0 || c.dia > 6) throw new Error(`clase ${i}: "dia" fuera de 0-6`);
+    if (!c.id) c.id = `x-s${c.semestre}-d${c.dia}-${c.inicio.replace(':', '')}-${i}`;
+  });
+  if (d.calendario && !Array.isArray(d.calendario.semestres)) {
+    throw new Error('"calendario.semestres" debe ser una lista');
+  }
+  return d;
+}
+
+function cargarPersonalizado(logger) {
+  const f = path.join(DATA_DIR, 'horario.json');
+  try {
+    if (!fs.existsSync(f)) return false;
+    const d = validar(JSON.parse(fs.readFileSync(f, 'utf8')));
+    BASE = d.clases;
+    if (d.calendario) calendario = { ...incorporado.calendario, ...d.calendario };
+    origenHorario = 'data/horario.json';
+    logger && logger.info(`horario cargado de data/horario.json: ${BASE.length} clases`);
+    return true;
+  } catch (e) {
+    logger && logger.error(`data/horario.json inválido (${e.message}); sigo con el horario incorporado`);
+    return false;
+  }
+}
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 
@@ -202,7 +247,11 @@ function claseAhora(jid, iso, hhmm) {
 }
 
 module.exports = {
-  DIAS, calendario, BASE,
+  DIAS,
+  get calendario() { return calendario; },
+  get BASE() { return BASE; },
+  get origenHorario() { return origenHorario; },
+  cargarPersonalizado,
   hoyISO, horaAhora, diaSemana, sumarDias, aMin,
   semestreDe, semanaDe, vacacionesDe, examenesDe, estadoDelDia,
   normaliza, canon, mismaAsignatura, coincide,

@@ -20,13 +20,15 @@ semana
 exámenes, festivos
 
 *Ajustar tu horario*
-Escríbelo en lenguaje normal, o mándame un audio:
-no curso Álgebra
-ponme Álgebra
-solo voy martes y jueves
-la VG30 no es la VG05
-Álgebra a las 16:30
-se cancela circuitos el lunes
+Dímelo en lenguaje normal, o mándame un audio:
+
+Tengo una asignatura llamada Redes en el aula 205 los martes a las 16:30
+Yo sí curso Álgebra
+No curso Estadística
+Solo voy martes y jueves
+El aula de Álgebra es la 12, no la 5
+Álgebra pasa a las 16:30
+Se cancela Álgebra el lunes
 
 Cuando detecte un cambio te preguntaré si es solo para ti o para toda la clase.
 Si alguien cambia algo para todos y a ti no te aplica, responde: no me aplica.
@@ -84,6 +86,24 @@ function responderConsulta(jid, intencion) {
       const porDia = {};
       for (const c of clases) (porDia[c.dia] ||= []).push(c);
       return `Tu semana:\n\n${fmt.semana(porDia)}`;
+    }
+
+    case 'saludo':
+      return 'Dime qué necesitas: hoy, mañana, semana, ahora, exámenes.\n\nEscribe ayuda para verlo todo.';
+
+    case 'gracias':
+      return 'A mandar.';
+
+    case 'restantes': {
+      const { estado, clases } = H.clasesDeDia(jid, hoy);
+      if (estado.tipo !== 'lectivo') return fmt.dia(hoy, estado, [], `Hoy es ${H.DIAS[H.diaSemana(hoy)]}.`);
+      const quedan = clases.filter(c => !c.cancelada && H.aMin(c.fin) > H.aMin(hora));
+      if (!quedan.length) return 'Ya has terminado por hoy.';
+      const enCurso = quedan[0] && H.aMin(quedan[0].inicio) <= H.aMin(hora);
+      const cab = quedan.length === 1
+        ? (enCurso ? 'Te queda la que estás dando:' : 'Te queda una clase:')
+        : `Te quedan ${quedan.length} clases${enCurso ? ', contando la de ahora' : ''}:`;
+      return `${cab}\n\n${fmt.lista(quedan)}`;
     }
 
     case 'semananum': {
@@ -174,6 +194,9 @@ function aplicar(jid, prop, scope) {
   if (prop.tipo === 'solodias') {
     // "solo voy martes y jueves" -> un override por cada día que se quita
     creados = prop.quitar.map(d => overrides.crear({ ...comun, tipo: 'quitar', match: { dia: d }, set: {} }));
+  } else if (prop.tipo === 'anadir' && Array.isArray(prop.dias)) {
+    // "los lunes y miércoles a las 12:00" -> una clase por cada día
+    creados = prop.dias.map(d => overrides.crear({ ...comun, tipo: 'anadir', match: {}, set: { ...prop.set, dia: d } }));
   } else {
     creados = [overrides.crear({ ...comun, tipo: prop.tipo, match: prop.match, set: prop.set })];
   }
@@ -237,24 +260,25 @@ function manejarAnadir(jid, a) {
   // ¿Choca con algo que ya tiene? Al repetidor le pasa a menudo.
   const { clases: suyas } = H.resolverSemestre(jid, hoy);
   const ini = H.aMin(a.inicio), fin = H.aMin(a.fin);
-  const choque = suyas.filter(c => c.dia === a.dia && !c.cancelada &&
+  const choque = suyas.filter(c => a.dias.includes(c.dia) && !c.cancelada &&
     H.aMin(c.inicio) < fin && ini < H.aMin(c.fin));
   const aviso = choque.length
-    ? `\n\nOjo, te choca con: ${choque.map(c => `${c.asignatura} ${c.inicio}`).join(', ')}`
+    ? `Ojo, te choca con: ${[...new Set(choque.map(c => `${c.asignatura} ${c.inicio}`))].join(', ')}\n\n`
     : '';
 
   // Alta manual con día y hora -> se pregunta el alcance, como cualquier cambio
   const prop = {
     tipo: 'anadir',
+    dias: a.dias,
     match: {},
     set: {
       semestre: sem ? sem.n : 1,
-      dia: a.dia, inicio: a.inicio, fin: a.fin,
-      asignatura: a.asignatura, edificio: a.edificio || '—', aula: '—',
+      inicio: a.inicio, fin: a.fin,
+      asignatura: a.asignatura, edificio: a.aula || '—', aula: '—',
     },
     resumen: a.resumen,
   };
-  return { texto: proponer(jid, prop).replace('*¿Para quién?*', `${aviso ? aviso.trim() + '\n\n' : ''}*¿Para quién?*`) };
+  return { texto: proponer(jid, prop).replace('¿Para quién?', aviso + '¿Para quién?') };
 }
 
 // ---------------- entrada principal ----------------

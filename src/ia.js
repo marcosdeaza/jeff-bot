@@ -6,9 +6,9 @@ const H = require('./horario');
 const eventos = require('./eventos');
 const formato = require('./formato');
 
-// Caché POR USUARIO. Una caché global indexada solo por el texto haría que dos
-// personas con la misma pregunta compartieran respuesta, y con horarios
-// personalizados eso devuelve el horario de otro.
+// Caché POR USUARIO. Antes era global por texto: si A preguntaba "¿qué tengo
+// hoy?" y B lo mismo en 2 min, B recibía el horario de A. Con horarios
+// personalizados eso sería directamente mentira.
 const cache = new Map();
 const TTL = 90 * 1000;
 
