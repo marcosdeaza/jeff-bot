@@ -1,0 +1,33 @@
+services:
+  jeff-bot:
+    build: .
+    image: jeff-bot:2.0
+    container_name: jeff-bot
+    restart: always
+
+    volumes:
+      - ./auth:/app/auth          # credenciales de WhatsApp
+      - ./data:/app/data          # estado: memoria, usuarios, ajustes, eventos.
+                                  # Imprescindible montarlo: si vive dentro del
+                                  # contenedor se pierde en cada rebuild.
+
+    env_file:
+      - .env                      # DEEPSEEK_API_KEY y GROQ_API_KEY (audio)
+
+    environment:
+      - TZ=Europe/Madrid
+      - DATA_DIR=/app/data
+      - AUTH_DIR=/app/auth
+
+    healthcheck:
+      test: ["CMD", "node", "/app/healthcheck.js"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+    logging:                      # sin tope, el log crece sin control
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

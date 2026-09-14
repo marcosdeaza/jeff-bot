@@ -1,0 +1,15 @@
+# Secretos: nunca deben salir del servidor
+.env
+*.env
+!.env.example
+
+# Credenciales de la sesión de WhatsApp
+auth/
+*.key
+
+# Estado en tiempo de ejecución
+data/
+*.log
+
+node_modules/
+.DS_Store
