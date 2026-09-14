@@ -105,6 +105,13 @@ había calculado el resolver, así que nunca se queda peor que sin él; y todo l
 que **modifica estado** (aplicar un cambio, deshacer, resetear) se resuelve en
 local, sin modelo, porque ahí hace falta exactitud y no estilo.
 
+Cuando el proveedor deja de responder, cada consulta espera como mucho
+`IA_TIMEOUT_MS` (12 s por defecto) y a los dos fallos seguidos se deja de
+llamarlo durante tres minutos: el bot sigue contestando al instante con el
+resolver y reintenta solo. El plazo cubre la petición entera, cabeceras y
+cuerpo; limitar solo la conexión deja fuera la lectura de la respuesta, y una
+respuesta que se corta a medias cuelga la petición indefinidamente.
+
 `MODO_IA` gradúa ese reparto:
 
 | Modo | Comportamiento |

@@ -25,7 +25,7 @@ let personalidad = PERSONALIDAD_POR_DEFECTO;
 // cada mensaje espere el timeout entero y el usuario vea "escribiendo" sin
 // respuesta. Tras varios fallos seguidos se deja de llamar un rato y se
 // responde con lo que ya calculó el resolver, que es instantáneo.
-const FALLOS_PARA_ABRIR = 3;
+const FALLOS_PARA_ABRIR = 2;
 const PAUSA_MS = 3 * 60 * 1000;
 let fallosSeguidos = 0;
 let pausadoHasta = 0;
@@ -125,17 +125,14 @@ function contextoCalendario(iso) {
 
 async function preguntar(jid, texto, opts = {}) {
   // Con el cortacircuitos abierto ni se intenta: responder al instante con lo
-  // que calculó el resolver es mejor que hacer esperar para acabar igual.
+  // que ya calculó el resolver es mejor que hacer esperar para acabar igual.
   if (!disponible()) return null;
 
-  for (let i = 0; i < 2; i++) {
-    const r = await intentarPreguntar(jid, texto, opts);
-    if (typeof r === 'string' && r) return r;
-    // Reintentar un timeout solo duplica la espera del usuario.
-    if (r && r._fallo && r.esTimeout) return null;
-    if (i === 0) { log.warn('reintentando la consulta al modelo'); await new Promise(res => setTimeout(res, 500)); }
-  }
-  return null;
+  // Un solo intento, a propósito. Reintentar aquí duplica lo que espera el
+  // usuario para, casi siempre, acabar fallando igual; de la insistencia ya se
+  // encarga el cortacircuitos, sin que nadie mire una pantalla.
+  const r = await intentarPreguntar(jid, texto, opts);
+  return (typeof r === 'string' && r) ? r : null;
 }
 
 async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, datos = null } = {}) {
@@ -233,26 +230,37 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
   const to = setTimeout(() => ctrl.abort(), cfg.IA_TIMEOUT_MS);
   try {
     const t0 = Date.now();
-    // Promise.race además del AbortController: en algunas versiones de Node el
-    // abort no interrumpe una conexión que se quedó colgada estableciéndose, y
-    // entonces la petición no se resuelve nunca. Esto garantiza continuar.
-    const res = await Promise.race([
-      fetch(cfg.DEEPSEEK_API, {
+
+    // El plazo cubre la petición ENTERA, cabeceras y cuerpo. Limitar solo el
+    // fetch deja fuera la lectura del cuerpo: si el servidor responde las
+    // cabeceras y luego se calla, res.json() espera indefinidamente y el
+    // usuario se queda con el "escribiendo" puesto para siempre.
+    const peticion = (async () => {
+      const res = await fetch(cfg.DEEPSEEK_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.DEEPSEEK_KEY}` },
         body: JSON.stringify({ model: cfg.MODELO, messages: mensajes, max_tokens: 400, temperature: 0.2 }),
         signal: ctrl.signal,
-      }),
+      });
+      if (!res.ok) return { _http: res.status };
+      return { _datos: await res.json() };
+    })();
+
+    // Promise.race además del AbortController: hay casos en que abortar no
+    // interrumpe una conexión colgada, y entonces la promesa no se resuelve.
+    const salida = await Promise.race([
+      peticion,
       new Promise((_, rechazar) =>
         setTimeout(() => rechazar(Object.assign(new Error('timeout'), { esTimeout: true })), cfg.IA_TIMEOUT_MS + 500)),
     ]);
     clearTimeout(to);
-    if (!res.ok) { log.error(`DeepSeek ${res.status}`); apuntarFallo(`HTTP ${res.status}`); return null; }
-    const data = await res.json();
+
+    if (salida._http) { log.error(`DeepSeek ${salida._http}`); apuntarFallo(`HTTP ${salida._http}`); return { _fallo: true, esTimeout: false }; }
+    const data = salida._datos;
     let r = data.choices?.[0]?.message?.content?.trim();
     log.info(`DeepSeek ${Date.now() - t0}ms`);
     apuntarGasto(data.usage);
-    if (!r) return null;
+    if (!r) { apuntarFallo('respuesta vacía'); return { _fallo: true, esTimeout: false }; }
     r = formato.limpiarLLM(r);
     cache.set(k, { r, t: Date.now() });
     if (cache.size > 400) cache.delete(cache.keys().next().value);
@@ -260,7 +268,12 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
     return r;
   } catch (e) {
     clearTimeout(to);
-    const esTimeout = e.esTimeout || e.name === 'AbortError';
+    try { ctrl.abort(); } catch (_) {}   // suelta la conexión que quedó colgada
+    // Un timeout de conexión llega como ConnectTimeoutError, no como
+    // AbortError; tratarlos por igual evita esperas dobles.
+    const LENTOS = ['AbortError', 'ConnectTimeoutError', 'HeadersTimeoutError', 'BodyTimeoutError', 'TimeoutError'];
+    const esTimeout = e.esTimeout || LENTOS.includes(e.name) ||
+      ['UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN'].includes(e.cause?.code || e.code);
     log.error(`DeepSeek: ${esTimeout ? `sin respuesta en ${cfg.IA_TIMEOUT_MS / 1000}s` : e.message}`);
     apuntarFallo(esTimeout ? 'timeout' : e.message);
     return { _fallo: true, esTimeout };
