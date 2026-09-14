@@ -26,40 +26,61 @@ let personalidad = PERSONALIDAD_POR_DEFECTO;
 // respuesta. Tras varios fallos seguidos se deja de llamar un rato y se
 // responde con lo que ya calculó el resolver, que es instantáneo.
 const FALLOS_PARA_ABRIR = 2;
+const PAUSA_MS = 3 * 60 * 1000;
+let fallosSeguidos = 0;
+let pausadoHasta = 0;
 
-// Los modelos se apartan de uno en uno. Si el principal deja de responder se
-// pasa al suplente en vez de renunciar al modelo entero: así una avería de un
-// modelo concreto no degrada la conversación.
-const MODELOS = [...new Set([cfg.MODELO, cfg.MODELO_RESERVA].filter(Boolean))];
-const apartados = new Map();
+function disponible() {
+  if (Date.now() < pausadoHasta) return false;
+  if (pausadoHasta) { log.info('vuelvo a intentar con el modelo tras la pausa'); pausadoHasta = 0; }
+  return true;
+}
 
-function modeloEnUso() {
+// Los proveedores se apartan de uno en uno. Si el preferente deja de responder
+// se pasa al siguiente en vez de renunciar al modelo entero, y cada fallo
+// seguido dobla su pausa: una API que desaparece para siempre acaba costando un
+// sondeo cada pocas horas en lugar de uno cada dos minutos.
+const apartados = new Map();   // nombre -> { hasta, seguidos }
+
+function proveedores() { return cfg.PROVEEDORES; }
+
+function proveedorEnUso() {
   const ahora = Date.now();
-  for (const m of MODELOS) {
-    const hasta = apartados.get(m) || 0;
-    if (hasta <= ahora) {
-      if (hasta) { apartados.delete(m); log.info(`vuelvo a probar ${m}`); }
-      return m;
+  for (const p of proveedores()) {
+    const a = apartados.get(p.nombre);
+    if (!a || a.hasta <= ahora) {
+      if (a) { apartados.delete(p.nombre); log.info(`${p.nombre} vuelve al turno`); }
+      return p;
     }
   }
   return null;
 }
 
-// Sondeo baratísimo: un token. Sirve para saber si un modelo apartado ya
-// responde, sin esperar a que lo descubra un usuario esperando en pantalla.
-async function sondear(m) {
+function apartarProveedor(p, motivo) {
+  const previo = apartados.get(p.nombre);
+  const seguidos = (previo?.seguidos || 0) + 1;
+  const espera = Math.min(cfg.PAUSA_MODELO_MS * 2 ** (seguidos - 1), cfg.PAUSA_MODELO_MAX_MS);
+  apartados.set(p.nombre, { hasta: Date.now() + espera, seguidos });
+  const siguiente = proveedorEnUso();
+  log.warn(`${p.nombre} (${p.modelo}) apartado ${Math.round(espera / 60000)} min, fallo ${seguidos} (${motivo})` +
+    (siguiente ? `; paso a ${siguiente.nombre}` : '; no queda ninguno, respondo en local'));
+}
+
+// Sondeo baratísimo: un token. Sirve para saber si un proveedor apartado ya
+// responde, sin esperar a que lo descubra un usuario mirando la pantalla.
+async function sondear(p) {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), 8000);
   try {
     const ok = await Promise.race([
       (async () => {
-        const res = await fetch(cfg.DEEPSEEK_API, {
+        const res = await fetch(p.url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.DEEPSEEK_KEY}` },
-          body: JSON.stringify({ model: m, messages: [{ role: 'user', content: 'ok' }], max_tokens: 1 }),
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p.clave}` },
+          body: JSON.stringify({ model: p.modelo, messages: [{ role: 'user', content: 'ok' }], max_tokens: 1 }),
           signal: ctrl.signal,
         });
-        await res.arrayBuffer();        // vacía el cuerpo para liberar la conexión
+        await res.arrayBuffer();          // vacía el cuerpo y libera la conexión
         return res.ok;
       })(),
       new Promise((_, rech) => setTimeout(() => rech(new Error('timeout')), 8500)),
@@ -73,35 +94,19 @@ async function sondear(m) {
   }
 }
 
-// Recupera el modelo preferente en cuanto vuelva, sin esperar a que expire la
-// pausa ni hacer que un usuario pague el plazo para descubrirlo.
+// Recupera el proveedor preferente en cuanto vuelva, sin esperar a que expire
+// su pausa ni hacer que un usuario pague el plazo para descubrirlo.
 async function probarApartados() {
-  const enUso = modeloEnUso();
-  for (const m of MODELOS) {
-    if (m === enUso) return;            // ya se usa el mejor disponible
-    if (!apartados.has(m)) continue;
-    if (await sondear(m)) {
-      apartados.delete(m);
-      log.info(`${m} vuelve a responder; lo recupero`);
+  const enUso = proveedorEnUso();
+  for (const p of proveedores()) {
+    if (enUso && p.nombre === enUso.nombre) return;   // ya se usa el mejor
+    if (!apartados.has(p.nombre)) continue;
+    if (await sondear(p)) {
+      apartados.delete(p.nombre);
+      log.info(`${p.nombre} (${p.modelo}) vuelve a responder; lo recupero`);
       return;
     }
   }
-}
-
-function apartarModelo(m, motivo) {
-  apartados.set(m, Date.now() + cfg.PAUSA_MODELO_MS);
-  const siguiente = modeloEnUso();
-  log.warn(`${m} apartado ${cfg.PAUSA_MODELO_MS / 60000} min (${motivo})` +
-    (siguiente ? `; paso a ${siguiente}` : '; no queda ningún modelo, respondo en local'));
-}
-const PAUSA_MS = 3 * 60 * 1000;
-let fallosSeguidos = 0;
-let pausadoHasta = 0;
-
-function disponible() {
-  if (Date.now() < pausadoHasta) return false;
-  if (pausadoHasta) { log.info('reintentando el modelo tras la pausa'); pausadoHasta = 0; }
-  return true;
 }
 
 function apuntarFallo(motivo) {
@@ -121,10 +126,11 @@ function apuntarExito() {
 function estadoIA() {
   return {
     disponible: Date.now() >= pausadoHasta,
-    modelo: modeloEnUso(),
+    proveedor: proveedorEnUso()?.nombre || null,
+    modelo: proveedorEnUso()?.modelo || null,
     apartados: [...apartados.entries()]
-      .filter(([, h]) => h > Date.now())
-      .map(([m, h]) => `${m}:${Math.round((h - Date.now()) / 1000)}s`),
+      .filter(([, a]) => a.hasta > Date.now())
+      .map(([n, a]) => `${n}:${Math.round((a.hasta - Date.now()) / 1000)}s(x${a.seguidos})`),
     fallosSeguidos,
     pausadoSegundos: pausadoHasta ? Math.max(0, Math.round((pausadoHasta - Date.now()) / 1000)) : 0,
   };
@@ -206,33 +212,42 @@ async function preguntar(jid, texto, opts = {}) {
   // Se prueba el modelo que esté en pie. Si falla queda apartado y se intenta
   // el suplente una sola vez: un usuario paga el plazo, los demás ya entran
   // directos al que funciona.
-  const primero = modeloEnUso();
-  if (!primero) { apuntarFallo('sin modelos disponibles'); return null; }
-
-  const r = await intentarPreguntar(jid, texto, { ...opts, modelo: primero });
-  if (typeof r === 'string' && r) return r;
-
-  const segundo = modeloEnUso();
-  if (segundo && segundo !== primero) {
-    const r2 = await intentarPreguntar(jid, texto, { ...opts, modelo: segundo });
-    if (typeof r2 === 'string' && r2) return r2;
+  // Se baja por la cadena: el primero sano contesta. Si falla queda apartado y
+  // se prueba el siguiente, de modo que un usuario paga el plazo una vez y los
+  // demás entran directos al que funciona.
+  const probados = new Set();
+  const limite = Date.now() + cfg.IA_PRESUPUESTO_MS;
+  for (let i = 0; i < proveedores().length; i++) {
+    const P = proveedorEnUso();
+    if (!P || probados.has(P.nombre)) break;
+    if (Date.now() >= limite) {
+      log.warn('agotado el presupuesto de la consulta; respondo en local');
+      break;
+    }
+    probados.add(P.nombre);
+    const r = await intentarPreguntar(jid, texto, { ...opts, prov: P, limite });
+    if (typeof r === 'string' && r) return r;
   }
-  apuntarFallo('ningún modelo respondió');
+  apuntarFallo('ningún proveedor respondió');
   return null;
 }
 
-async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, datos = null, modelo = null } = {}) {
+async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, datos = null, prov = null, limite = null } = {}) {
   const iso = H.hoyISO();
   const hora = H.horaAhora();
   const { texto: hor, huella } = contextoHorario(jid, iso);
 
-  const usado = modelo || cfg.MODELO;
+  const P = prov || proveedores()[0];
+  if (!P) return null;
+  const usado = `${P.nombre}/${P.modelo}`;
   // Los modelos de razonamiento gastan la salida en pensar antes de contestar:
   // medidos 350-850 tokens y 4-10 s para leer un horario. Necesitan más techo y
   // más plazo, o se quedan sin presupuesto a mitad y responden cualquier cosa.
-  const razona = /pro|reason|think/i.test(usado);
+  const razona = P.razona || /pro|reason|think/i.test(P.modelo);
   const tope = razona ? 1400 : 400;
-  const plazo = razona ? cfg.IA_TIMEOUT_MS * 2 : cfg.IA_TIMEOUT_MS;
+  let plazo = razona ? cfg.IA_TIMEOUT_MS * 2 : cfg.IA_TIMEOUT_MS;
+  // Nunca más allá del presupuesto de la consulta completa.
+  if (limite) plazo = Math.max(2000, Math.min(plazo, limite - Date.now()));
   const k = clave(jid, texto, huella + (datos ? '|d' : '') + '|' + usado);
   if (!esAudio && cache.has(k)) {
     const c = cache.get(k);
@@ -329,10 +344,10 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
     // cabeceras y luego se calla, res.json() espera indefinidamente y el
     // usuario se queda con el "escribiendo" puesto para siempre.
     const peticion = (async () => {
-      const res = await fetch(cfg.DEEPSEEK_API, {
+      const res = await fetch(P.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.DEEPSEEK_KEY}` },
-        body: JSON.stringify({ model: usado, messages: mensajes, max_tokens: tope, temperature: 0.2 }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${P.clave}` },
+        body: JSON.stringify({ model: P.modelo, messages: mensajes, max_tokens: tope, temperature: 0.2 }),
         signal: ctrl.signal,
       });
       if (!res.ok) return { _http: res.status };
@@ -350,7 +365,7 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
 
     if (salida._http) {
       log.error(`${usado}: HTTP ${salida._http}`);
-      apartarModelo(usado, `HTTP ${salida._http}`);
+      apartarProveedor(P, `HTTP ${salida._http}`);
       return { _fallo: true, esTimeout: false };
     }
     const data = salida._datos;
@@ -373,7 +388,7 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
     const esTimeout = e.esTimeout || LENTOS.includes(e.name) ||
       ['UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN'].includes(e.cause?.code || e.code);
     log.error(`${usado}: ${esTimeout ? `sin respuesta en ${plazo / 1000}s` : e.message}`);
-    apartarModelo(usado, esTimeout ? 'timeout' : e.message);
+    apartarProveedor(P, esTimeout ? 'timeout' : e.message);
     return { _fallo: true, esTimeout };
   }
 }

@@ -105,12 +105,23 @@ había calculado el resolver, así que nunca se queda peor que sin él; y todo l
 que **modifica estado** (aplicar un cambio, deshacer, resetear) se resuelve en
 local, sin modelo, porque ahí hace falta exactitud y no estilo.
 
-Cuando un modelo deja de responder queda apartado media hora y se pasa al
-suplente (`DEEPSEEK_MODEL_RESERVA`), de modo que la avería de un modelo concreto
-no cuesta la conversación: solo la primera consulta paga el plazo y las
-siguientes entran directas al que funciona. No se espera a que expire la pausa:
-cada dos minutos un sondeo de un token comprueba el modelo preferente y lo
-recupera en cuanto vuelve, sin que nadie lo descubra esperando en pantalla. Si ninguno responde, cada consulta
+El modelo no es uno, es una cadena de proveedores por orden de preferencia:
+cualquier endpoint compatible con el formato de OpenAI vale, y basta URL, clave
+y modelo. Se usa el primero que esté sano.
+
+Cuando uno deja de responder queda apartado y se pasa al siguiente, así que la
+avería de un proveedor no cuesta la conversación: solo la primera consulta paga
+el plazo y las siguientes entran directas al que funciona. Cada fallo seguido
+dobla su pausa hasta un tope, de modo que una API que desaparece del todo acaba
+costando un sondeo cada pocas horas en lugar de uno cada dos minutos.
+
+No se espera a que expire la pausa: cada dos minutos un sondeo de un token
+comprueba el proveedor preferente y lo recupera en cuanto vuelve. Y la consulta
+entera tiene su propio techo (`IA_PRESUPUESTO_MS`), para que recorrer la cadena
+no alargue la espera según se añaden proveedores.
+
+Añadir o quitar un proveedor es poner o borrar su clave en `.env`. El sistema
+está pensado para que la marcha de cualquiera de ellos no requiera tocar código. Si ninguno responde, cada consulta
 espera como mucho `IA_TIMEOUT_MS` (12 s; el doble para modelos de razonamiento,
 que necesitan más) y a los dos fallos seguidos se deja de llamarlos durante tres
 minutos: el bot sigue contestando al instante con el resolver y reintenta solo. El plazo cubre la petición entera, cabeceras y
@@ -216,7 +227,9 @@ Otros puntos pensados para tocarse:
 | `DEEPSEEK_API_KEY` | sí | Preguntas libres |
 | `GROQ_API_KEY` | no | Transcribir notas de voz |
 | `DEEPSEEK_MODEL` | no | Por defecto `deepseek-flash` |
-| `DEEPSEEK_MODEL_RESERVA` | no | Suplente si el principal falla. Por defecto `deepseek-v4-pro` |
+| `AWS_API_KEY`, `AWS_API_URL`, `AWS_MODEL` | no | Proveedor preferente, si lo hay |
+| `DEEPSEEK_MODEL_RESERVA` | no | Último recurso. Por defecto `deepseek-v4-pro` |
+| `IA_PRESUPUESTO_MS` | no | Techo de la consulta completa. Por defecto 20000 |
 | `IA_TIMEOUT_MS` | no | Plazo por consulta. Por defecto 12000 |
 | `PAUSA_MODELO_MS` | no | Cuánto queda apartado un modelo averiado. Por defecto 30 min |
 | `SONDEO_MODELO_MS` | no | Cada cuánto se comprueba si volvió. Por defecto 2 min |
@@ -307,6 +320,7 @@ main.js              arranque y reparto de mensajes
 healthcheck.js       latido que lee Docker
 anunciar.js          encolar un anuncio
 horario-export.js    volcar el horario a JSON editable
+comprobar.js         comprobación de arranque de cada módulo
 src/
   config.js          rutas, claves, constantes
   log.js             registro

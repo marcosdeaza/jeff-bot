@@ -14,7 +14,7 @@ RUN npm install --omit=dev --no-audit --no-fund
 
 COPY main.js ./
 COPY src ./src
-COPY healthcheck.js anunciar.js horario-export.js ./
+COPY healthcheck.js anunciar.js horario-export.js comprobar.js ./
 
 RUN mkdir -p /app/auth /app/data
 
