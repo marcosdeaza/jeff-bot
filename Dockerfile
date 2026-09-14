@@ -2,7 +2,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++ git tini
+# tzdata: sin ella la variable TZ no surte efecto en Alpine y la hora
+# del sistema queda en UTC, que despista al depurar.
+RUN apk add --no-cache python3 make g++ git tini tzdata
 
 COPY package.json ./
 # Versiones FIJADAS a las que ya funcionaban en producción. El Dockerfile

@@ -103,6 +103,7 @@ async function main() {
   store.asegurarDir(cfg.DATA_DIR);
 
   H.cargarPersonalizado(log);      // data/horario.json manda sobre el incorporado
+  ia.cargarPersonalidad();         // data/personalidad.md define el tono
   const memoria = cargarSesiones();
   overrides.cargar();
   eventos.cargar();
@@ -113,6 +114,7 @@ async function main() {
   const hoy = H.hoyISO();
   const sn = H.semanaDe(hoy);
   log.info(`horario: ${H.BASE.length} clases (${H.origenHorario})`);
+  log.info(`modo de IA: ${cfg.MODO_IA}`);
   log.info(`hoy ${hoy}, ${sn ? `semana ${sn.semana} del S${sn.semestre}` : 'fuera de período lectivo'}`);
 
   const conn = new Conexion({ onMensaje });

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const fs = require('fs');
 const cfg = require('./config');
 const store = require('./store');
 const log = require('./log');
@@ -11,6 +12,28 @@ const formato = require('./formato');
 // personalizados eso sería directamente mentira.
 const cache = new Map();
 const TTL = 90 * 1000;
+
+// Personalidad editable: data/personalidad.md se inyecta en el prompt. Permite
+// cambiar el tono sin tocar código ni reconstruir la imagen.
+const PERSONALIDAD_POR_DEFECTO = `Hablas claro y vas al grano, con naturalidad.
+Puedes tener un punto seco y con humor, pero nunca a costa de la claridad.
+Tuteas. No te disculpas ni das rodeos. Si algo no lo sabes, lo dices y ya.`;
+
+let personalidad = PERSONALIDAD_POR_DEFECTO;
+
+function cargarPersonalidad() {
+  try {
+    if (fs.existsSync(cfg.F.personalidad)) {
+      const t = fs.readFileSync(cfg.F.personalidad, 'utf8').trim();
+      if (t) { personalidad = t; log.info(`personalidad cargada de data/personalidad.md (${t.length} caracteres)`); return true; }
+    } else {
+      fs.mkdirSync(cfg.DATA_DIR, { recursive: true });
+      fs.writeFileSync(cfg.F.personalidad, PERSONALIDAD_POR_DEFECTO + '\n');
+      log.info('creado data/personalidad.md: edítalo para cambiar el tono');
+    }
+  } catch (e) { log.warn(`personalidad: ${e.message}`); }
+  return false;
+}
 
 // Tarifas deepseek-flash por millón de tokens (peak; fuera de pico es la mitad).
 const TARIFA = { hit: 0.006, miss: 0.30, salida: 1.20 };
@@ -76,12 +99,12 @@ async function preguntar(jid, texto, opts = {}) {
   return null;
 }
 
-async function intentarPreguntar(jid, texto, { historial = [], esAudio = false } = {}) {
+async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, datos = null } = {}) {
   const iso = H.hoyISO();
   const hora = H.horaAhora();
   const { texto: hor, huella } = contextoHorario(jid, iso);
 
-  const k = clave(jid, texto, huella);
+  const k = clave(jid, texto, huella + (datos ? '|d' : ''));
   if (!esAudio && cache.has(k)) {
     const c = cache.get(k);
     if (Date.now() - c.t < TTL) { log.debug('respuesta desde caché'); return c.r; }
@@ -108,7 +131,10 @@ VG25
 14:30 *Análisis de circuitos*
 VG04
 
-Reglas estrictas:
+CÓMO ERES
+${personalidad}
+
+Reglas estrictas de formato (mandan sobre lo anterior):
 - Negrita con UN solo asterisco: *así*. Nunca dos.
 - PROHIBIDO usar emojis, flechas (←, →), viñetas (·, -, •) y títulos en mayúsculas.
 - Solo la hora de INICIO. Nunca el rango. Nunca el aula (M11, M21): solo el edificio.
@@ -141,6 +167,20 @@ preguntan cómo, diles que escriban el cambio en lenguaje natural (p. ej. "no
 curso Álgebra" o "la VG30 no es la VG05") y Jeff preguntará si es solo para
 ellos o para todos.
 
+${datos ? `=== BORRADOR YA RESUELTO POR EL SISTEMA ===
+Las horas, aulas y asignaturas de aquí abajo son la verdad: no cambies ninguna,
+no añadas clases y no quites ninguna.
+
+Tu trabajo es entregarlo como lo diría una persona:
+- CONSERVA la frase corta de contexto del principio ("Hoy es lunes...", "El
+  viernes tienes:"), o escribe una equivalente. Aquí sí va esa frase.
+- Si el mensaje pregunta algo que se deduce de estos datos (si da tiempo entre
+  clases, cuándo se acaba, cuántas horas son), RESPÓNDELO en una frase antes de
+  la lista, o en vez de la lista si la lista no aporta.
+- Si la pregunta se contesta con una sola clase, no las listes todas.
+
+${datos}
+` : ''}
 === MOMENTO ACTUAL (lo único que cambia entre consultas) ===
 ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA: mensaje transcrito de un audio; puede tener erratas, interpreta por contexto.' : ''}`;
 
@@ -196,4 +236,4 @@ async function transcribir(buffer, mimetype) {
   } catch (e) { log.error(`transcripción: ${e.message}`); return null; }
 }
 
-module.exports = { preguntar, transcribir, contextoHorario, TARIFA };
+module.exports = { preguntar, transcribir, contextoHorario, cargarPersonalidad, TARIFA };

@@ -6,6 +6,17 @@ const eventos = require('./eventos');
 const usuarios = require('./usuarios');
 const ia = require('./ia');
 const log = require('./log');
+const cfg = require('./config');
+
+// Qué se responde en local y qué se manda al modelo. Los datos (listados de
+// clases) se resuelven SIEMPRE en local: son exactos e instantáneos, y así el
+// modelo nunca puede inventarse un aula. Lo que cambia según el modo es quién
+// redacta lo conversacional.
+// Las que TOCAN ESTADO se quedan siempre en local: deben ser exactas y
+// predecibles, y una redacción libre no aporta nada ahí.
+const MUTACIONES = new Set(['miscambios', 'deshacer', 'reset', 'ayuda']);
+
+function esMutacion(tipo) { return MUTACIONES.has(tipo); }
 
 // Cambios propuestos a la espera de que el usuario diga el alcance.
 const pendientes = new Map();
@@ -325,9 +336,21 @@ async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
     return { texto: `Hecho. ${describir(objetivo)} ya no se aplica en tu horario. Para los demás sigue.` };
   }
 
-  // 3) consultas de alta confianza -> respuesta local instantánea
+  // 3) consultas reconocidas. El resolver local calcula SIEMPRE los datos
+  // exactos; según el modo, los devuelve tal cual o se los pasa al modelo para
+  // que los redacte. Si el modelo falla o tarda, vale la respuesta local: nunca
+  // se queda peor que sin él.
   const c1 = I.consulta(t);
-  if (c1) { const r = responderConsulta(jid, c1); if (r) return { texto: r }; }
+  if (c1) {
+    const local = responderConsulta(jid, c1);
+    if (local) {
+      if (cfg.MODO_IA === 'ahorro' || esMutacion(c1.tipo)) return { texto: local };
+      const r = await ia.preguntar(jid, texto, {
+        historial: sesion?.historial || [], esAudio, datos: local,
+      });
+      return { texto: r || local };
+    }
+  }
 
   // 4) ¿quiere añadir o recuperar una asignatura?
   const ad = I.anadir(t);
@@ -342,9 +365,20 @@ async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
   if (ev) { pendientes.set(jid, { prop: { ...ev, esEvento: true }, ts: Date.now() });
     return { texto: `Apunto: ${ev.texto}\n\n¿Para quién?\n*1* solo para mí\n*2* para toda la clase\n*0* cancelar` }; }
 
-  // 6) consultas ambiguas
+  // 6) consultas ambiguas ("el lunes" puede ser una consulta o el principio de
+  // una pregunta). Se resuelven los datos igual, pero es el modelo quien decide
+  // qué responde de verdad el mensaje.
   const c2 = I.consultaDebil(t);
-  if (c2) { const r = responderConsulta(jid, c2); if (r) return { texto: r }; }
+  if (c2) {
+    const local = responderConsulta(jid, c2);
+    if (local) {
+      if (cfg.MODO_IA === 'ahorro') return { texto: local };
+      const r = await ia.preguntar(jid, texto, {
+        historial: sesion?.historial || [], esAudio, datos: local,
+      });
+      return { texto: r || local };
+    }
+  }
 
   // 7) libre -> LLM con SU horario resuelto
   const r = await ia.preguntar(jid, t, { historial: sesion?.historial || [], esAudio });

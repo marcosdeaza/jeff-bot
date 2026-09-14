@@ -12,6 +12,7 @@ module.exports = {
     overrides: path.join(DATA_DIR, 'overrides.json'),
     usuarios:  path.join(DATA_DIR, 'users.json'),
     difusion:  path.join(DATA_DIR, 'broadcast.json'),
+    personalidad: path.join(DATA_DIR, 'personalidad.md'),
   },
   TZ: 'Europe/Madrid',
   DEEPSEEK_API: 'https://api.deepseek.com/chat/completions',
@@ -23,6 +24,11 @@ module.exports = {
   GROQ_KEY: process.env.GROQ_API_KEY || '',
   // JIDs con permiso para forzar cambios globales sin voto. Coma-separado.
   ADMINS: (process.env.ADMIN_JIDS || '').split(',').map(s => s.trim()).filter(Boolean),
+  // Cuánto se apoya en el modelo:
+  //   ahorro        todo lo interpretable se responde en local (más barato)
+  //   equilibrado   los saludos y lo ambiguo van al modelo (por defecto)
+  //   conversacional además, lo dudoso se consulta antes de darlo por local
+  MODO_IA: process.env.MODO_IA || 'conversacional',
   MAX_HISTORIAL: 8,
   // Reconexión
   BACKOFF_BASE_MS: 2000,

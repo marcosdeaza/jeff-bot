@@ -81,6 +81,40 @@ VG cero cinco" equivale a escribirlo con cifras.
 
 ---
 
+## Datos exactos, redacción del modelo
+
+El resolver calcula el horario de esa persona y el modelo lo entrega. Ni uno ni
+otro por separado: el resolver no sabe conversar y el modelo no debe inventarse
+un aula.
+
+Todo mensaje pasa por el modelo, con los datos ya resueltos delante y la
+instrucción de no alterarlos. Así puede responder lo que de verdad se pregunta
+en lugar de soltar un listado:
+
+```
+- ¿me da tiempo a comer entre clases el lunes?
+- Sí, de 12:30 a 14:30 tienes dos horas libres. Después vas encadenado
+  de 14:30 a 20:30 sin huecos.
+```
+
+Dos salvaguardas: si el modelo falla o tarda, se entrega la respuesta que ya
+había calculado el resolver, así que nunca se queda peor que sin él; y todo lo
+que **modifica estado** (aplicar un cambio, deshacer, resetear) se resuelve en
+local, sin modelo, porque ahí hace falta exactitud y no estilo.
+
+`MODO_IA` gradúa ese reparto:
+
+| Modo | Comportamiento |
+| --- | --- |
+| `conversacional` | Todo lo redacta el modelo. Por defecto |
+| `equilibrado` | El modelo solo para lo conversacional y lo ambiguo |
+| `ahorro` | Sin modelo salvo preguntas libres. El más barato |
+
+El tono se edita en `data/personalidad.md`, que se inyecta en el prompt. Se crea
+solo al arrancar y se aplica al reiniciar.
+
+---
+
 ## Arquitectura
 
 El horario oficial no se edita nunca. Los cambios se apilan encima como
@@ -154,7 +188,8 @@ Otros puntos pensados para tocarse:
 | Abreviaturas y apodos de asignatura | `ALIAS` en `src/horario.js` |
 | Argot y muletillas | `ARGOT`, `MULETILLAS` en `src/intent.js` |
 | Plantillas de respuesta | `src/formato.js` |
-| Reglas de estilo del modelo | `src/ia.js` |
+| Tono y personalidad | `data/personalidad.md` |
+| Reglas de formato del modelo | `src/ia.js` |
 | Reconexión y tiempos de espera | `src/config.js` |
 
 ---
@@ -166,6 +201,7 @@ Otros puntos pensados para tocarse:
 | `DEEPSEEK_API_KEY` | sí | Preguntas libres |
 | `GROQ_API_KEY` | no | Transcribir notas de voz |
 | `DEEPSEEK_MODEL` | no | Por defecto `deepseek-flash` |
+| `MODO_IA` | no | `conversacional`, `equilibrado` o `ahorro` |
 | `ADMIN_JIDS` | no | Cuentas con permisos de administración |
 | `TZ` | no | Por defecto `Europe/Madrid` |
 | `LOG_LEVEL` | no | `debug`, `info`, `warn`, `error` |
@@ -197,29 +233,30 @@ menos de quince segundos; no hace falta reiniciar.
 
 ## Coste
 
-El 81 % de los mensajes reales se resuelve en local, sin llamar al modelo: son
-instantáneos y gratis. Solo llega al modelo lo genuinamente conversacional.
-
-Una consulta que sí llega son unos 512 tokens de caché, 243 nuevos y 300 de
-salida: 0,00044 $ con `deepseek-flash` en hora punta. La salida es el 83 % del
+Medido en producción con `deepseek-flash`: unos 0,00039 $ por mensaje, con un
+68 % de los tokens de entrada servidos desde caché. La salida es el grueso del
 coste, así que la brevedad no es solo estética.
 
-Para 30 personas y 180 días lectivos:
+Para 30 personas y 180 días lectivos, con todo pasando por el modelo:
 
 | Preguntas al día por persona | Al día | Curso completo |
 | --- | --- | --- |
-| 3 | 0,007 $ | 1,34 $ |
-| 10 | 0,025 $ | 4,47 $ |
-| 20 | 0,050 $ | 8,95 $ |
+| 3 | 0,032 $ | 5,67 $ |
+| 10 | 0,105 $ | 18,90 $ |
+| 20 | 0,210 $ | 37,80 $ |
+
+Con `MODO_IA=ahorro` el 81 % de los mensajes se resuelve sin modelo y esas
+cifras bajan alrededor de un 72 %, a cambio de respuestas más rígidas.
 
 ---
 
 ## Decisiones de diseño
 
-**Responder sin el modelo siempre que se pueda.** Un horario es determinista:
-consultarlo no necesita un modelo de lenguaje. La interpretación local cubre lo
-frecuente y el modelo queda para lo que de verdad es conversación. Esto rebajó
-el gasto un 72 % y quitó latencia donde más se nota.
+**Separar el cálculo de la redacción.** Un horario es determinista y se
+resuelve sin modelo; conversar sobre él, no. El resolver produce el dato exacto
+y el modelo lo entrega, con el dato delante y prohibición de tocarlo. El modelo
+no puede equivocarse en un aula porque no la deduce, y aun así responde lo que
+se le pregunta. Si falla, queda la respuesta del resolver.
 
 **Un solo socket, siempre.** Reconectar reinvocando el arranque sin cerrar el
 socket anterior los apila, junto con sus escuchadores, y deja dos escritores
