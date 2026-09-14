@@ -26,6 +26,31 @@ let personalidad = PERSONALIDAD_POR_DEFECTO;
 // respuesta. Tras varios fallos seguidos se deja de llamar un rato y se
 // responde con lo que ya calculó el resolver, que es instantáneo.
 const FALLOS_PARA_ABRIR = 2;
+
+// Los modelos se apartan de uno en uno. Si el principal deja de responder se
+// pasa al suplente en vez de renunciar al modelo entero: así una avería de un
+// modelo concreto no degrada la conversación.
+const MODELOS = [...new Set([cfg.MODELO, cfg.MODELO_RESERVA].filter(Boolean))];
+const apartados = new Map();
+
+function modeloEnUso() {
+  const ahora = Date.now();
+  for (const m of MODELOS) {
+    const hasta = apartados.get(m) || 0;
+    if (hasta <= ahora) {
+      if (hasta) { apartados.delete(m); log.info(`vuelvo a probar ${m}`); }
+      return m;
+    }
+  }
+  return null;
+}
+
+function apartarModelo(m, motivo) {
+  apartados.set(m, Date.now() + cfg.PAUSA_MODELO_MS);
+  const siguiente = modeloEnUso();
+  log.warn(`${m} apartado ${cfg.PAUSA_MODELO_MS / 60000} min (${motivo})` +
+    (siguiente ? `; paso a ${siguiente}` : '; no queda ningún modelo, respondo en local'));
+}
 const PAUSA_MS = 3 * 60 * 1000;
 let fallosSeguidos = 0;
 let pausadoHasta = 0;
@@ -51,8 +76,15 @@ function apuntarExito() {
 }
 
 function estadoIA() {
-  return { disponible: Date.now() >= pausadoHasta, fallosSeguidos,
-           pausadoSegundos: pausadoHasta ? Math.max(0, Math.round((pausadoHasta - Date.now()) / 1000)) : 0 };
+  return {
+    disponible: Date.now() >= pausadoHasta,
+    modelo: modeloEnUso(),
+    apartados: [...apartados.entries()]
+      .filter(([, h]) => h > Date.now())
+      .map(([m, h]) => `${m}:${Math.round((h - Date.now()) / 1000)}s`),
+    fallosSeguidos,
+    pausadoSegundos: pausadoHasta ? Math.max(0, Math.round((pausadoHasta - Date.now()) / 1000)) : 0,
+  };
 }
 
 function cargarPersonalidad() {
@@ -128,19 +160,37 @@ async function preguntar(jid, texto, opts = {}) {
   // que ya calculó el resolver es mejor que hacer esperar para acabar igual.
   if (!disponible()) return null;
 
-  // Un solo intento, a propósito. Reintentar aquí duplica lo que espera el
-  // usuario para, casi siempre, acabar fallando igual; de la insistencia ya se
-  // encarga el cortacircuitos, sin que nadie mire una pantalla.
-  const r = await intentarPreguntar(jid, texto, opts);
-  return (typeof r === 'string' && r) ? r : null;
+  // Se prueba el modelo que esté en pie. Si falla queda apartado y se intenta
+  // el suplente una sola vez: un usuario paga el plazo, los demás ya entran
+  // directos al que funciona.
+  const primero = modeloEnUso();
+  if (!primero) { apuntarFallo('sin modelos disponibles'); return null; }
+
+  const r = await intentarPreguntar(jid, texto, { ...opts, modelo: primero });
+  if (typeof r === 'string' && r) return r;
+
+  const segundo = modeloEnUso();
+  if (segundo && segundo !== primero) {
+    const r2 = await intentarPreguntar(jid, texto, { ...opts, modelo: segundo });
+    if (typeof r2 === 'string' && r2) return r2;
+  }
+  apuntarFallo('ningún modelo respondió');
+  return null;
 }
 
-async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, datos = null } = {}) {
+async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, datos = null, modelo = null } = {}) {
   const iso = H.hoyISO();
   const hora = H.horaAhora();
   const { texto: hor, huella } = contextoHorario(jid, iso);
 
-  const k = clave(jid, texto, huella + (datos ? '|d' : ''));
+  const usado = modelo || cfg.MODELO;
+  // Los modelos de razonamiento gastan la salida en pensar antes de contestar:
+  // medidos 350-850 tokens y 4-10 s para leer un horario. Necesitan más techo y
+  // más plazo, o se quedan sin presupuesto a mitad y responden cualquier cosa.
+  const razona = /pro|reason|think/i.test(usado);
+  const tope = razona ? 1400 : 400;
+  const plazo = razona ? cfg.IA_TIMEOUT_MS * 2 : cfg.IA_TIMEOUT_MS;
+  const k = clave(jid, texto, huella + (datos ? '|d' : '') + '|' + usado);
   if (!esAudio && cache.has(k)) {
     const c = cache.get(k);
     if (Date.now() - c.t < TTL) { log.debug('respuesta desde caché'); return c.r; }
@@ -227,7 +277,7 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
   mensajes.push({ role: 'user', content: texto });
 
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), cfg.IA_TIMEOUT_MS);
+  const to = setTimeout(() => ctrl.abort(), plazo);
   try {
     const t0 = Date.now();
 
@@ -239,7 +289,7 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
       const res = await fetch(cfg.DEEPSEEK_API, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.DEEPSEEK_KEY}` },
-        body: JSON.stringify({ model: cfg.MODELO, messages: mensajes, max_tokens: 400, temperature: 0.2 }),
+        body: JSON.stringify({ model: usado, messages: mensajes, max_tokens: tope, temperature: 0.2 }),
         signal: ctrl.signal,
       });
       if (!res.ok) return { _http: res.status };
@@ -251,16 +301,21 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
     const salida = await Promise.race([
       peticion,
       new Promise((_, rechazar) =>
-        setTimeout(() => rechazar(Object.assign(new Error('timeout'), { esTimeout: true })), cfg.IA_TIMEOUT_MS + 500)),
+        setTimeout(() => rechazar(Object.assign(new Error('timeout'), { esTimeout: true })), plazo + 500)),
     ]);
     clearTimeout(to);
 
-    if (salida._http) { log.error(`DeepSeek ${salida._http}`); apuntarFallo(`HTTP ${salida._http}`); return { _fallo: true, esTimeout: false }; }
+    if (salida._http) {
+      log.error(`${usado}: HTTP ${salida._http}`);
+      apartarModelo(usado, `HTTP ${salida._http}`);
+      return { _fallo: true, esTimeout: false };
+    }
     const data = salida._datos;
+    // Lo que piensa un modelo de razonamiento va aparte; aquí solo vale content.
     let r = data.choices?.[0]?.message?.content?.trim();
-    log.info(`DeepSeek ${Date.now() - t0}ms`);
+    log.info(`${usado} ${Date.now() - t0}ms`);
     apuntarGasto(data.usage);
-    if (!r) { apuntarFallo('respuesta vacía'); return { _fallo: true, esTimeout: false }; }
+    if (!r) { log.warn(`${usado}: respuesta vacía`); return { _fallo: true, esTimeout: false }; }
     r = formato.limpiarLLM(r);
     cache.set(k, { r, t: Date.now() });
     if (cache.size > 400) cache.delete(cache.keys().next().value);
@@ -274,8 +329,8 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
     const LENTOS = ['AbortError', 'ConnectTimeoutError', 'HeadersTimeoutError', 'BodyTimeoutError', 'TimeoutError'];
     const esTimeout = e.esTimeout || LENTOS.includes(e.name) ||
       ['UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN'].includes(e.cause?.code || e.code);
-    log.error(`DeepSeek: ${esTimeout ? `sin respuesta en ${cfg.IA_TIMEOUT_MS / 1000}s` : e.message}`);
-    apuntarFallo(esTimeout ? 'timeout' : e.message);
+    log.error(`${usado}: ${esTimeout ? `sin respuesta en ${plazo / 1000}s` : e.message}`);
+    apartarModelo(usado, esTimeout ? 'timeout' : e.message);
     return { _fallo: true, esTimeout };
   }
 }

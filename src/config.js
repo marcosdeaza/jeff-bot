@@ -19,6 +19,10 @@ module.exports = {
   // Fijado explícitamente: 'deepseek-chat' es un alias que hoy apunta a
   // deepseek-flash, pero podría moverse a un modelo más caro sin avisar.
   MODELO: process.env.DEEPSEEK_MODEL || 'deepseek-flash',
+  // Suplente para cuando el principal deja de responder. Es de razonamiento:
+  // más caro y lento, pero mantiene la conversación en pie.
+  MODELO_RESERVA: process.env.DEEPSEEK_MODEL_RESERVA || 'deepseek-v4-pro',
+  PAUSA_MODELO_MS: Number(process.env.PAUSA_MODELO_MS || 5 * 60 * 1000),
   DEEPSEEK_KEY: process.env.DEEPSEEK_API_KEY || '',
   GROQ_API: 'https://api.groq.com/openai/v1/audio/transcriptions',
   GROQ_KEY: process.env.GROQ_API_KEY || '',

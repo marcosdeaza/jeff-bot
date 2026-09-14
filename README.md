@@ -105,10 +105,13 @@ había calculado el resolver, así que nunca se queda peor que sin él; y todo l
 que **modifica estado** (aplicar un cambio, deshacer, resetear) se resuelve en
 local, sin modelo, porque ahí hace falta exactitud y no estilo.
 
-Cuando el proveedor deja de responder, cada consulta espera como mucho
-`IA_TIMEOUT_MS` (12 s por defecto) y a los dos fallos seguidos se deja de
-llamarlo durante tres minutos: el bot sigue contestando al instante con el
-resolver y reintenta solo. El plazo cubre la petición entera, cabeceras y
+Cuando un modelo deja de responder queda apartado unos minutos y se pasa al
+suplente (`DEEPSEEK_MODEL_RESERVA`), de modo que la avería de un modelo concreto
+no cuesta la conversación: solo la primera consulta paga el plazo y las
+siguientes entran directas al que funciona. Si ninguno responde, cada consulta
+espera como mucho `IA_TIMEOUT_MS` (12 s; el doble para modelos de razonamiento,
+que necesitan más) y a los dos fallos seguidos se deja de llamarlos durante tres
+minutos: el bot sigue contestando al instante con el resolver y reintenta solo. El plazo cubre la petición entera, cabeceras y
 cuerpo; limitar solo la conexión deja fuera la lectura de la respuesta, y una
 respuesta que se corta a medias cuelga la petición indefinidamente.
 
@@ -211,6 +214,8 @@ Otros puntos pensados para tocarse:
 | `DEEPSEEK_API_KEY` | sí | Preguntas libres |
 | `GROQ_API_KEY` | no | Transcribir notas de voz |
 | `DEEPSEEK_MODEL` | no | Por defecto `deepseek-flash` |
+| `DEEPSEEK_MODEL_RESERVA` | no | Suplente si el principal falla. Por defecto `deepseek-v4-pro` |
+| `IA_TIMEOUT_MS` | no | Plazo por consulta. Por defecto 12000 |
 | `MODO_IA` | no | `conversacional`, `equilibrado` o `ahorro` |
 | `ADMIN_JIDS` | no | Cuentas con permisos de administración |
 | `TZ` | no | Por defecto `Europe/Madrid` |
