@@ -21,6 +21,40 @@ Tuteas. No te disculpas ni das rodeos. Si algo no lo sabes, lo dices y ya.`;
 
 let personalidad = PERSONALIDAD_POR_DEFECTO;
 
+// CORTACIRCUITOS. Si el proveedor deja de responder, seguir llamándolo hace que
+// cada mensaje espere el timeout entero y el usuario vea "escribiendo" sin
+// respuesta. Tras varios fallos seguidos se deja de llamar un rato y se
+// responde con lo que ya calculó el resolver, que es instantáneo.
+const FALLOS_PARA_ABRIR = 3;
+const PAUSA_MS = 3 * 60 * 1000;
+let fallosSeguidos = 0;
+let pausadoHasta = 0;
+
+function disponible() {
+  if (Date.now() < pausadoHasta) return false;
+  if (pausadoHasta) { log.info('reintentando el modelo tras la pausa'); pausadoHasta = 0; }
+  return true;
+}
+
+function apuntarFallo(motivo) {
+  fallosSeguidos++;
+  if (fallosSeguidos >= FALLOS_PARA_ABRIR && !pausadoHasta) {
+    pausadoHasta = Date.now() + PAUSA_MS;
+    log.warn(`modelo pausado ${PAUSA_MS / 60000} min tras ${fallosSeguidos} fallos (${motivo}); se responde en local`);
+  }
+}
+
+function apuntarExito() {
+  if (fallosSeguidos) log.info('modelo recuperado');
+  fallosSeguidos = 0;
+  pausadoHasta = 0;
+}
+
+function estadoIA() {
+  return { disponible: Date.now() >= pausadoHasta, fallosSeguidos,
+           pausadoSegundos: pausadoHasta ? Math.max(0, Math.round((pausadoHasta - Date.now()) / 1000)) : 0 };
+}
+
 function cargarPersonalidad() {
   try {
     if (fs.existsSync(cfg.F.personalidad)) {
@@ -90,11 +124,16 @@ function contextoCalendario(iso) {
 }
 
 async function preguntar(jid, texto, opts = {}) {
-  // Un tropiezo puntual de la API no debe dejar al usuario sin respuesta.
+  // Con el cortacircuitos abierto ni se intenta: responder al instante con lo
+  // que calculó el resolver es mejor que hacer esperar para acabar igual.
+  if (!disponible()) return null;
+
   for (let i = 0; i < 2; i++) {
     const r = await intentarPreguntar(jid, texto, opts);
-    if (r) return r;
-    if (i === 0) { log.warn('reintentando la consulta al LLM'); await new Promise(r => setTimeout(r, 700)); }
+    if (typeof r === 'string' && r) return r;
+    // Reintentar un timeout solo duplica la espera del usuario.
+    if (r && r._fallo && r.esTimeout) return null;
+    if (i === 0) { log.warn('reintentando la consulta al modelo'); await new Promise(res => setTimeout(res, 500)); }
   }
   return null;
 }
@@ -191,17 +230,24 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
   mensajes.push({ role: 'user', content: texto });
 
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 20000);
+  const to = setTimeout(() => ctrl.abort(), cfg.IA_TIMEOUT_MS);
   try {
     const t0 = Date.now();
-    const res = await fetch(cfg.DEEPSEEK_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.DEEPSEEK_KEY}` },
-      body: JSON.stringify({ model: cfg.MODELO, messages: mensajes, max_tokens: 400, temperature: 0.2 }),
-      signal: ctrl.signal,
-    });
+    // Promise.race además del AbortController: en algunas versiones de Node el
+    // abort no interrumpe una conexión que se quedó colgada estableciéndose, y
+    // entonces la petición no se resuelve nunca. Esto garantiza continuar.
+    const res = await Promise.race([
+      fetch(cfg.DEEPSEEK_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.DEEPSEEK_KEY}` },
+        body: JSON.stringify({ model: cfg.MODELO, messages: mensajes, max_tokens: 400, temperature: 0.2 }),
+        signal: ctrl.signal,
+      }),
+      new Promise((_, rechazar) =>
+        setTimeout(() => rechazar(Object.assign(new Error('timeout'), { esTimeout: true })), cfg.IA_TIMEOUT_MS + 500)),
+    ]);
     clearTimeout(to);
-    if (!res.ok) { log.error(`DeepSeek ${res.status}`); return null; }
+    if (!res.ok) { log.error(`DeepSeek ${res.status}`); apuntarFallo(`HTTP ${res.status}`); return null; }
     const data = await res.json();
     let r = data.choices?.[0]?.message?.content?.trim();
     log.info(`DeepSeek ${Date.now() - t0}ms`);
@@ -210,11 +256,14 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
     r = formato.limpiarLLM(r);
     cache.set(k, { r, t: Date.now() });
     if (cache.size > 400) cache.delete(cache.keys().next().value);
+    apuntarExito();
     return r;
   } catch (e) {
     clearTimeout(to);
-    log.error(`DeepSeek: ${e.name === 'AbortError' ? 'timeout' : e.message}`);
-    return null;
+    const esTimeout = e.esTimeout || e.name === 'AbortError';
+    log.error(`DeepSeek: ${esTimeout ? `sin respuesta en ${cfg.IA_TIMEOUT_MS / 1000}s` : e.message}`);
+    apuntarFallo(esTimeout ? 'timeout' : e.message);
+    return { _fallo: true, esTimeout };
   }
 }
 
@@ -236,4 +285,4 @@ async function transcribir(buffer, mimetype) {
   } catch (e) { log.error(`transcripción: ${e.message}`); return null; }
 }
 
-module.exports = { preguntar, transcribir, contextoHorario, cargarPersonalidad, TARIFA };
+module.exports = { preguntar, transcribir, contextoHorario, cargarPersonalidad, estadoIA, TARIFA };

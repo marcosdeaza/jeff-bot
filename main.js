@@ -139,7 +139,8 @@ async function main() {
 
   setInterval(() => {
     const e = conn.estado();
-    log.info(`latido · ${e.conectado ? 'conectado' : 'CAÍDO'} · usuarios ${usuarios.todos().length} · ajustes ${overrides.todos().filter(o => o.activo).length} · eventos ${eventos.todos().length}`);
+    const m = ia.estadoIA();
+    log.info(`latido · ${e.conectado ? 'conectado' : 'CAÍDO'} · modelo ${m.disponible ? 'ok' : `pausado ${m.pausadoSegundos}s`} · usuarios ${usuarios.todos().length} · ajustes ${overrides.todos().filter(o => o.activo).length} · eventos ${eventos.todos().length}`);
   }, 3600000);
 
   const salir = async sig => {

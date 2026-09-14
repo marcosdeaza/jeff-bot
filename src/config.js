@@ -29,6 +29,9 @@ module.exports = {
   //   equilibrado   los saludos y lo ambiguo van al modelo (por defecto)
   //   conversacional además, lo dudoso se consulta antes de darlo por local
   MODO_IA: process.env.MODO_IA || 'conversacional',
+  // 20s era demasiado: en un chat, esperar tanto para nada es peor que
+  // responder al instante con el dato exacto que ya se tiene calculado.
+  IA_TIMEOUT_MS: Number(process.env.IA_TIMEOUT_MS || 12000),
   MAX_HISTORIAL: 8,
   // Reconexión
   BACKOFF_BASE_MS: 2000,
