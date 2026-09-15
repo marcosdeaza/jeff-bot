@@ -73,6 +73,10 @@ salida se filtra después para retirar cualquier adorno que reintroduzca.
 | Corregir hora | `<X> pasa a las <hora>` |
 | Anular una clase | `se cancela <X> el <día>` |
 | Desvincularse de un cambio | `no me aplica <X>` |
+| Apuntar una tarea | `tengo que hacer la práctica`, `apunta estudiar`, `recuérdame llamar` |
+| Ver tus tareas | `mis tareas`, `qué tengo que hacer` |
+| Marcarla hecha | `ya hice la práctica`, `ya está todo` |
+| Descartarla | `quita lo de estudiar`, `no voy a hacer el trabajo` |
 | Gestión | `mis cambios`, `deshacer`, `resetear`, `ayuda` |
 
 Acepta varios días en una frase, avisa si la clase nueva se solapa con otra, y
@@ -147,6 +151,26 @@ respuesta que se corta a medias cuelga la petición indefinidamente.
 
 El tono se edita en `data/personalidad.md`, que se inyecta en el prompt. Se crea
 solo al arrancar y se aplica al reiniciar.
+
+---
+
+## Tareas del día
+
+Cada uno apunta lo suyo en lenguaje normal y no se pregunta alcance: nadie apunta
+sus deberes para la clase entera.
+
+Una tarea pendiente arrastra de un día para otro, porque seguir pendiente es justo
+lo que hay que recordar. Lo que se reinicia es el recuento de hechas: se guarda el
+día en que se completó cada una, así que empieza en cero cada mañana sin borrar
+nada del historial.
+
+A la hora fijada en `HORA_REPASO` (21:00 por defecto) se pregunta una vez por lo
+que quede sin hacer, solo a quien tenga algo pendiente. El día del último repaso
+se guarda en disco, de modo que un reinicio a esa misma hora no lo repite.
+
+Al descartar algo, "quita álgebra" sigue siendo la asignatura y no una tarea que
+la mencione: cuando la frase nombra una asignatura del horario, solo cuenta como
+tarea si el texto coincide exactamente o se da su número.
 
 ---
 
@@ -239,6 +263,7 @@ Otros puntos pensados para tocarse:
 | `AWS_API_KEY`, `AWS_API_URL`, `AWS_MODEL` | no | Proveedor preferente, si lo hay |
 | `DEEPSEEK_MODEL_RESERVA` | no | Último recurso. Por defecto `deepseek-v4-pro` |
 | `IA_PRESUPUESTO_MS` | no | Techo de la consulta completa. Por defecto 20000 |
+| `HORA_REPASO` | no | Hora del repaso de tareas. Por defecto 21. Vacío lo apaga |
 | `IA_TIMEOUT_MS` | no | Plazo por consulta. Por defecto 12000 |
 | `PAUSA_MODELO_MS` | no | Cuánto queda apartado un modelo averiado. Por defecto 30 min |
 | `SONDEO_MODELO_MS` | no | Cada cuánto se comprueba si volvió. Por defecto 2 min |
@@ -338,6 +363,7 @@ src/
   horario.js         resolución de capas, fechas, carga en caliente
   overrides.js       L1 y L2: cambios con alcance
   eventos.js         L3: exámenes y avisos
+  tareas.js          tareas personales del día
   usuarios.js        registro de quién usa el bot
   intent.js          interpretación local del lenguaje
   comandos.js        reparto de respuestas

@@ -359,6 +359,40 @@ function semestreMencionado(texto, isoHoy) {
   return null;
 }
 
+
+// ---------- TAREAS PERSONALES ----------
+// Devuelve la acción y el texto al que se refiere. Quien decide si ese texto
+// corresponde a una tarea real es el router, que es quien puede mirarlas: aquí
+// solo se interpreta la frase.
+const T_NUEVA = /^(?:ap[uú]nta(?:me)?|apuntar|an[oó]ta(?:me)?|recu[eé]rda(?:me)?|tengo que|tengo pendiente|debo|hay que|quiero hacer|me toca hacer|tarea|deberes)\s*:?\s*(.+)/i;
+const T_LISTAR = /\b(mis tareas|mi lista|que tengo que hacer|que me queda por hacer|tareas pendientes|mis pendientes|lista de tareas|mis deberes|que tengo pendiente)\b/;
+const T_HECHA = /^(?:ya\s+)?(?:lo\s+|la\s+|las\s+|los\s+)?(?:he\s+)?(?:hice|hecho|termin[eé]|terminado|acab[eé]|acabado|complet[eé]|completado|finalic[eé]|listo|est[aá] hecho|est[aá]n hechas)\s*(?:lo\s+de\s+|la\s+|el\s+|los\s+|las\s+)?(.*)$/i;
+const T_QUITAR = /^(?:qu[ií]ta(?:me)?|quitar|borra(?:me)?|borrar|elimina|olvida(?:te de)?|descarta|no voy a hacer|paso de|cancela)\s+(?:la\s+|el\s+|lo\s+de\s+|los\s+|las\s+)?(.+)/i;
+
+// "ya está todo", "todo hecho", "todas hechas": completar la lista entera.
+const T_TODO = /^(?:ya\s+)?(?:est[aá]n?\s+)?(?:todo|todas|todos)(?:\s+(?:hecho|hechas|hechos|listo|listas|listos))?\s*$/i;
+
+function tarea(texto) {
+  const t = n(texto);
+  if (T_LISTAR.test(t)) return { accion: 'listar' };
+  if (T_TODO.test(texto.trim())) return { accion: 'hecha', ref: 'todo' };
+
+  let m = texto.match(T_HECHA);
+  if (m) return { accion: 'hecha', ref: (m[1] || '').trim() };
+
+  m = texto.match(T_NUEVA);
+  if (m && m[1].trim().length > 2) return { accion: 'nueva', texto: m[1].trim() };
+
+  // "quita X" es ambiguo: X puede ser una tarea o una asignatura. Se marca como
+  // dudoso para que el router lo compruebe contra las tareas reales antes de
+  // decidir; si no es ninguna, sigue su camino como cambio de horario.
+  m = texto.match(T_QUITAR);
+  if (m && m[1].trim().length > 1) {
+    return { accion: 'quitar', ref: m[1].trim(), dudoso: !!asignaturaMencionada(n(m[1])) };
+  }
+  return null;
+}
+
 // ---------- 3. RESPUESTA AL ALCANCE ----------
 function alcance(texto) {
   const t = n(texto);
@@ -368,4 +402,4 @@ function alcance(texto) {
   return null;
 }
 
-module.exports = { consulta, consultaDebil, cambio, anadir, alcance, fechaExacta, semestreMencionado, asignaturaMencionada, diasMencionados, digitalizar, n };
+module.exports = { consulta, consultaDebil, cambio, anadir, tarea, alcance, fechaExacta, semestreMencionado, asignaturaMencionada, diasMencionados, digitalizar, n };

@@ -34,6 +34,20 @@ probar('comandos: responde una consulta local', async () => {
   if (!r || !r.texto) throw new Error('sin respuesta');
   return r.texto.split('\n')[0];
 });
+probar('tareas: apuntar, listar y completar', async () => {
+  const T = require('./src/tareas'); T.cargar();
+  const cmd = require('./src/comandos');
+  const J = 'humo-tareas@lid';
+  T.de(J).slice().forEach(t => T.descartar(J, t.id));
+  let r = await cmd.manejar(J, 'apunta probar el humo', { sesion: { historial: [] } });
+  if (!/Apuntado/.test(r.texto)) throw new Error('no apunta');
+  if (T.pendientes(J).length !== 1) throw new Error('no queda pendiente');
+  r = await cmd.manejar(J, 'ya hice probar el humo', { sesion: { historial: [] } });
+  if (T.pendientes(J).length !== 0) throw new Error('no la completa');
+  if (T.hechasHoy(J).length !== 1) throw new Error('no cuenta como hecha hoy');
+  T.de(J).slice().forEach(t => T.descartar(J, t.id));
+  return 'ok';
+});
 probar('formato: render limpio', () => {
   const f = require('./src/formato');
   const t = f.clase({ inicio: '10:30', fin: '12:30', asignatura: 'Álgebra', edificio: 'VG25', aula: 'M11' });

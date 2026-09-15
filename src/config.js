@@ -13,6 +13,7 @@ module.exports = {
     usuarios:  path.join(DATA_DIR, 'users.json'),
     difusion:  path.join(DATA_DIR, 'broadcast.json'),
     personalidad: path.join(DATA_DIR, 'personalidad.md'),
+    tareas:    path.join(DATA_DIR, 'tasks.json'),
   },
   TZ: 'Europe/Madrid',
   DEEPSEEK_API: 'https://api.deepseek.com/chat/completions',
@@ -66,12 +67,15 @@ module.exports = {
   //   equilibrado   los saludos y lo ambiguo van al modelo (por defecto)
   //   conversacional además, lo dudoso se consulta antes de darlo por local
   MODO_IA: process.env.MODO_IA || 'conversacional',
-  // 20s era demasiado: en un chat, esperar tanto para nada es peor que
-  // responder al instante con el dato exacto que ya se tiene calculado.
-  IA_TIMEOUT_MS: Number(process.env.IA_TIMEOUT_MS || 12000),
+  // Medido en producción: un proveedor sano contesta entre 0,6 y 2,6 s. Doce
+  // segundos de plazo solo servían para que un cuelgue puntual se notara mucho;
+  // con seis, el relevo al siguiente pasa casi desapercibido.
+  IA_TIMEOUT_MS: Number(process.env.IA_TIMEOUT_MS || 6000),
   // Techo para la consulta ENTERA, recorriendo proveedores incluidos. Sin él,
   // añadir un proveedor más alarga lo que espera quien tropiece con la avería.
   IA_PRESUPUESTO_MS: Number(process.env.IA_PRESUPUESTO_MS || 20000),
+  // Repaso de tareas al final del día (hora local 0-23). HORA_REPASO= lo apaga.
+  HORA_REPASO: process.env.HORA_REPASO === '' ? null : Number(process.env.HORA_REPASO || 21),
   MAX_HISTORIAL: 8,
   // Reconexión
   BACKOFF_BASE_MS: 2000,

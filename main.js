@@ -10,6 +10,7 @@ const H = require('./src/horario');
 const overrides = require('./src/overrides');
 const eventos = require('./src/eventos');
 const usuarios = require('./src/usuarios');
+const tareas = require('./src/tareas');
 const difusion = require('./src/difusion');
 const comandos = require('./src/comandos');
 const ia = require('./src/ia');
@@ -111,13 +112,14 @@ async function main() {
   overrides.cargar();
   eventos.cargar();
   usuarios.cargar();
+  tareas.cargar();
   difusion.cargar();
   usuarios.importarDesdeMemoria(memoria);   // no perder a quien ya hablaba con el bot
 
   const hoy = H.hoyISO();
   const sn = H.semanaDe(hoy);
   log.info(`horario: ${H.BASE.length} clases (${H.origenHorario})`);
-  log.info(`modo de IA: ${cfg.MODO_IA}`);
+  log.info(`modo de IA: ${cfg.MODO_IA} · repaso de tareas ${cfg.HORA_REPASO == null ? 'desactivado' : 'a las ' + cfg.HORA_REPASO + ':00'}`);
   log.info(`hoy ${hoy}, ${sn ? `semana ${sn.semana} del S${sn.semestre}` : 'fuera de período lectivo'}`);
 
   const conn = new Conexion({ onMensaje });
@@ -127,6 +129,7 @@ async function main() {
   setInterval(() => {
     difusion.sincronizar();                      // recoge anuncios encolados desde fuera
     overrides.sincronizar();                     // y cambios aplicados desde administración
+    tareas.sincronizar();
     if (conn.conectado && difusion.pendientes().length) {
       difusion.procesar(conn).catch(e => log.error(`difusión: ${e.message}`));
     }
@@ -148,12 +151,13 @@ async function main() {
   setInterval(() => {
     const e = conn.estado();
     const m = ia.estadoIA();
-    log.info(`latido · ${e.conectado ? 'conectado' : 'CAÍDO'} · modelo ${m.disponible ? 'ok' : `pausado ${m.pausadoSegundos}s`} · usuarios ${usuarios.todos().length} · ajustes ${overrides.todos().filter(o => o.activo).length} · eventos ${eventos.todos().length}`);
+    const pend = tareas.conPendientes().length;
+    log.info(`latido · ${e.conectado ? 'conectado' : 'CAÍDO'} · modelo ${m.proveedor || 'ninguno'} · usuarios ${usuarios.todos().length} · ajustes ${overrides.todos().filter(o => o.activo).length} · eventos ${eventos.todos().length} · con tareas ${pend}`);
   }, 3600000);
 
   const salir = async sig => {
     log.warn(`recibido ${sig}: guardando y cerrando`);
-    try { await guardarSesiones(); await overrides.guardar(); await eventos.guardar(); await usuarios.guardar(); await difusion.guardar(); } catch (_) {}
+    try { await guardarSesiones(); await overrides.guardar(); await eventos.guardar(); await usuarios.guardar(); await tareas.guardar(); await difusion.guardar(); } catch (_) {}
     process.exit(0);
   };
   process.on('SIGTERM', () => salir('SIGTERM'));
