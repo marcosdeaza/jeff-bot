@@ -133,8 +133,12 @@ comprueba el proveedor preferente y lo recupera en cuanto vuelve. Y la consulta
 entera tiene su propio techo (`IA_PRESUPUESTO_MS`), para que recorrer la cadena
 no alargue la espera según se añaden proveedores.
 
-Añadir o quitar un proveedor es poner o borrar su clave en `.env`. El sistema
-está pensado para que la marcha de cualquiera de ellos no requiera tocar código. Si ninguno responde, cada consulta
+Añadir o quitar un proveedor es poner o dejar vacía su variable en `.env`: sin
+clave o sin modelo, no existe. El sistema está pensado para que la marcha de
+cualquiera de ellos no requiera tocar código.
+
+Con un único proveedor configurado no hay relevo posible: si se cae, se responde
+con el resolver local, que es exacto e instantáneo aunque menos conversacional. Si ninguno responde, cada consulta
 espera como mucho `IA_TIMEOUT_MS` (12 s; el doble para modelos de razonamiento,
 que necesitan más) y a los dos fallos seguidos se deja de llamarlos durante tres
 minutos: el bot sigue contestando al instante con el resolver y reintenta solo. El plazo cubre la petición entera, cabeceras y

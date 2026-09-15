@@ -25,27 +25,29 @@ module.exports = {
   // que esté sano; los que fallan se apartan y se recuperan solos.
   //
   // El orden importa: arriba lo más rápido o barato, abajo lo que siempre
-  // estará ahí. Un proveedor sin clave se ignora, así que quitar uno es
-  // borrar su variable de entorno, sin tocar código.
+  // estará ahí. Un proveedor sin clave o sin modelo se ignora, así que quitar
+  // uno es dejar su variable vacía en .env, sin tocar código. Se usa ?? y no
+  // ||, porque con || una cadena vacía caía en el valor por defecto y el
+  // proveedor seguía en la cadena.
   get PROVEEDORES() {
     return [
       {
         nombre: 'aws',
         url: process.env.AWS_API_URL || 'https://bedrock-mantle.eu-west-2.api.aws/v1/chat/completions',
         clave: process.env.AWS_API_KEY || '',
-        modelo: process.env.AWS_MODEL || 'deepseek.v3.2',
+        modelo: process.env.AWS_MODEL ?? 'deepseek.v3.2',
       },
       {
         nombre: 'deepseek',
         url: 'https://api.deepseek.com/chat/completions',
         clave: process.env.DEEPSEEK_API_KEY || '',
-        modelo: process.env.DEEPSEEK_MODEL || 'deepseek-flash',
+        modelo: process.env.DEEPSEEK_MODEL ?? 'deepseek-flash',
       },
       {
         nombre: 'deepseek-pro',
         url: 'https://api.deepseek.com/chat/completions',
         clave: process.env.DEEPSEEK_API_KEY || '',
-        modelo: process.env.DEEPSEEK_MODEL_RESERVA || 'deepseek-v4-pro',
+        modelo: process.env.DEEPSEEK_MODEL_RESERVA ?? 'deepseek-v4-pro',
         razona: true,   // gasta salida pensando: necesita más plazo y más techo
       },
     ].filter(p => p.clave && p.url && p.modelo);
