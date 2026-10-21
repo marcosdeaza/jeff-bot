@@ -5,7 +5,8 @@ const overrides = require('./overrides');
 const eventos = require('./eventos');
 const usuarios = require('./usuarios');
 const ia = require('./ia');
-const tareas = require('./tareas');
+const agendaCmd = require('./agenda-cmd');
+const AI = require('./agenda-intent');
 const log = require('./log');
 const cfg = require('./config');
 
@@ -45,14 +46,14 @@ Se cancela Álgebra el lunes
 Cuando detecte un cambio te preguntaré si es solo para ti o para toda la clase.
 Si alguien cambia algo para todos y a ti no te aplica, responde: no me aplica.
 
-*Tus tareas del día*
-tengo que hacer la práctica de bases
-apunta estudiar para el examen
-mis tareas
-ya hice la práctica
-quita lo de estudiar
+*Tu agenda* (solo la ves tú)
+recuérdame mañana a las 9 llamar al médico
+tengo que entregar la práctica el viernes
+nota: el wifi de la biblio es eduroam
+temporizador de 25 minutos
+mis tareas, mis notas, mis recordatorios
 
-Al final del día te recuerdo lo que quede sin hacer.
+Escribe *ayuda agenda* para ver todo lo que puedo apuntarte.
 
 *Gestionar*
 mis cambios
@@ -248,6 +249,7 @@ function describir(o) {
 
 // ---------------- propuesta de cambio + pregunta de alcance ----------------
 function proponer(jid, prop) {
+  agendaCmd.cancelarEspera(jid);
   pendientes.set(jid, { prop, ts: Date.now() });
   return `He entendido: ${prop.resumen}\n\n¿Para quién?\n*1* solo para mí\n*2* para toda la clase\n*0* cancelar`;
 }
@@ -350,92 +352,24 @@ function manejarAnadir(jid, a) {
 }
 
 
-// ---------------- tareas personales ----------------
-function listaTareas(jid, cabecera) {
-  const pend = tareas.pendientes(jid);
-  const hechas = tareas.hechasHoy(jid);
-  const partes = [];
-
-  if (pend.length) {
-    partes.push((cabecera || 'Pendientes:') + '\n' + pend.map((t, i) => `${i + 1} ${t.texto}`).join('\n'));
-  } else {
-    partes.push(hechas.length ? 'No te queda nada pendiente.' : 'No tienes tareas apuntadas.');
-  }
-  if (hechas.length) {
-    partes.push(`*Hechas hoy: ${hechas.length}*\n` + hechas.map(t => t.texto).join('\n'));
-  }
-  return partes.join('\n\n');
-}
-
-// Devuelve null cuando la frase no se refiere a ninguna tarea real, para que el
-// router siga su camino: "quita álgebra" es una asignatura, no una tarea.
-function manejarTarea(jid, t) {
-  if (t.accion === 'listar') return { texto: listaTareas(jid) };
-
-  if (t.accion === 'nueva') {
-    const x = tareas.crear(jid, t.texto);
-    const n = tareas.pendientes(jid).length;
-    return { texto: `Apuntado: ${x.texto}\n\nTienes ${n} ${n === 1 ? 'tarea pendiente' : 'tareas pendientes'}.` };
-  }
-
-  const pend = tareas.pendientes(jid);
-  const ref = (t.ref || '').trim();
-
-  // "ya está todo" / "las he hecho todas"
-  if (t.accion === 'hecha' && /^(todo|todas|todos|ya esta todo|toda la lista)$/i.test(ref)) {
-    if (!pend.length) return { texto: 'No tenías nada pendiente.' };
-    pend.forEach(x => tareas.completar(jid, x.id));
-    return { texto: `Hecho. ${pend.length} ${pend.length === 1 ? 'tarea completada' : 'tareas completadas'}.\n\n${listaTareas(jid)}` };
-  }
-
-  // Sin referencia y con una sola pendiente, no hay ambigüedad posible
-  if (!ref) {
-    if (pend.length === 1 && t.accion === 'hecha') {
-      tareas.completar(jid, pend[0].id);
-      return { texto: `Hecho: ${pend[0].texto}\n\n${listaTareas(jid)}` };
-    }
-    if (!pend.length) return null;
-    return { texto: `¿Cuál?\n\n${pend.map((x, i) => `${i + 1} ${x.texto}`).join('\n')}` };
-  }
-
-  let encaja = tareas.buscar(jid, ref);
-
-  // Si la frase nombra una asignatura ("quita álgebra"), lo más probable es que
-  // hable del horario y no de una tarea que casualmente la menciona. Solo se
-  // acepta como tarea si la coincidencia es exacta o se dio por número.
-  if (t.dudoso) {
-    const norm = x => (x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-    const porNumero = /^\d{1,2}$/.test(ref);
-    encaja = porNumero ? encaja : encaja.filter(x => norm(x.texto) === norm(ref));
-  }
-
-  if (!encaja.length) return null;                 // no es una tarea: que siga el router
-  if (encaja.length > 1) {
-    return { texto: `Encajan varias, dime el número:\n\n${encaja.map(x => `${pend.indexOf(x) + 1} ${x.texto}`).join('\n')}` };
-  }
-
-  const x = encaja[0];
-  if (t.accion === 'hecha') {
-    tareas.completar(jid, x.id);
-    return { texto: `Hecho: ${x.texto}\n\n${listaTareas(jid)}` };
-  }
-  tareas.descartar(jid, x.id);
-  return { texto: `Quitada: ${x.texto}\n\n${listaTareas(jid)}` };
-}
-
-// Mensaje del repaso del final del día.
-function repasoDelDia(jid) {
-  const pend = tareas.pendientes(jid);
-  if (!pend.length) return null;
-  return `Repaso del día. Te ${pend.length === 1 ? 'queda' : 'quedan'} ${pend.length}:\n\n`
-    + pend.map((t, i) => `${i + 1} ${t.texto}`).join('\n')
-    + '\n\nDime cuáles has hecho, o responde: ya está todo.';
-}
-
 // ---------------- entrada principal ----------------
-async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
+async function manejar(jid, texto, opts = {}) {
+  const r = await enrutar(jid, texto, opts);
+  // Una pregunta abierta de la agenda sustituye a la del alcance, y viceversa.
+  if (r && r.espera) pendientes.delete(jid);
+  return r;
+}
+
+async function enrutar(jid, texto, { esAudio = false, sesion = null } = {}) {
   const t = texto.trim();
   if (!t) return null;
+  const agendaPersonal = agendaCmd.resumenParaConversacion(jid);
+
+  // 0) respuesta a algo que preguntó la agenda ("¿seguro que lo borro?")
+  if (agendaCmd.hayEspera(jid)) {
+    const r = agendaCmd.manejar(jid, t);
+    if (r) return r;
+  }
 
   // 1) ¿Está respondiendo a una pregunta de alcance?
   const pend = pendientes.get(jid);
@@ -496,13 +430,25 @@ async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
     return { texto: `Hecho. ${describir(objetivo)} ya no se aplica en tu horario. Para los demás sigue.` };
   }
 
-  // 3) tareas personales. Van antes que las consultas porque "qué tengo que
-  // hacer" contiene "que tengo", que si no se lo lleva la regla de la fecha.
-  // manejarTarea devuelve null si la frase no apunta a ninguna tarea real.
-  const tr = I.tarea(t);
-  if (tr) {
-    const res = manejarTarea(jid, tr);
-    if (res) return res;
+  // 3) agenda personal: tareas, notas, recordatorios. Va antes que las
+  // consultas porque "recuérdame mañana..." contiene "mañana", que si no se lo
+  // lleva la regla de la fecha. Devuelve null si la frase no es de agenda.
+  const ag = agendaCmd.manejar(jid, t);
+  if (ag) return ag;
+
+  // "apunta examen de álgebra el 15 de enero" es un evento de clase
+  if (/^(apunta|anota|evento|aviso)\b/.test(I.n(t))) {
+    const ev0 = detectarEvento(t);
+    if (ev0) { agendaCmd.cancelarEspera(jid); pendientes.set(jid, { prop: { ...ev0, esEvento: true }, ts: Date.now() });
+      return { texto: `Apunto: ${ev0.texto}\n\n¿Para quién?\n*1* solo para mí\n*2* para toda la clase\n*0* cancelar` }; }
+  }
+
+  // Suena claramente a agenda pero no se ha entendido en local: el modelo lo
+  // traduce a acciones y se ejecutan aquí.
+  const pista = AI.pista(t);
+  if (pista === 'fuerte') {
+    const r = await agendaPorModelo(jid, t);
+    if (r) return r;
   }
 
   // 4) consultas reconocidas. El resolver local calcula SIEMPRE los datos
@@ -515,7 +461,7 @@ async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
     if (local) {
       if (cfg.MODO_IA === 'ahorro' || esMutacion(c1.tipo)) return { texto: local };
       const r = await ia.preguntar(jid, texto, {
-        historial: sesion?.historial || [], esAudio, datos: local,
+        historial: sesion?.historial || [], esAudio, datos: local, agendaPersonal,
       });
       return { texto: r || local };
     }
@@ -534,6 +480,13 @@ async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
   if (ev) { pendientes.set(jid, { prop: { ...ev, esEvento: true }, ts: Date.now() });
     return { texto: `Apunto: ${ev.texto}\n\n¿Para quién?\n*1* solo para mí\n*2* para toda la clase\n*0* cancelar` }; }
 
+  // Frases como "ya lo he terminado" o "quita lo de mañana" que no eran
+  // ni horario ni nada reconocible en local.
+  if (pista === 'debil') {
+    const r = await agendaPorModelo(jid, t);
+    if (r) return r;
+  }
+
   // 6) consultas ambiguas ("el lunes" puede ser una consulta o el principio de
   // una pregunta). Se resuelven los datos igual, pero es el modelo quien decide
   // qué responde de verdad el mensaje.
@@ -543,16 +496,21 @@ async function manejar(jid, texto, { esAudio = false, sesion = null } = {}) {
     if (local) {
       if (cfg.MODO_IA === 'ahorro') return { texto: local };
       const r = await ia.preguntar(jid, texto, {
-        historial: sesion?.historial || [], esAudio, datos: local,
+        historial: sesion?.historial || [], esAudio, datos: local, agendaPersonal,
       });
       return { texto: r || local };
     }
   }
 
   // 7) libre -> LLM con SU horario resuelto
-  const r = await ia.preguntar(jid, t, { historial: sesion?.historial || [], esAudio });
+  const r = await ia.preguntar(jid, t, { historial: sesion?.historial || [], esAudio, agendaPersonal });
   if (r) return { texto: r };
   return { texto: 'No he podido procesar eso. Prueba con hoy, mañana o ayuda.', noGuardar: true };
+}
+
+async function agendaPorModelo(jid, t) {
+  const acciones = await ia.interpretarAgenda(jid, t, agendaCmd.contextoParaModelo(jid));
+  return acciones ? agendaCmd.desdeModelo(jid, acciones) : null;
 }
 
 function detectarEvento(t) {
@@ -574,4 +532,4 @@ function aplicarEvento(jid, prop, scope) {
   };
 }
 
-module.exports = { manejar, AYUDA, pendientes, aplicar, aplicarEvento, describir, responderConsulta, listaTareas, repasoDelDia };
+module.exports = { manejar, AYUDA, pendientes, aplicar, aplicarEvento, describir, responderConsulta };

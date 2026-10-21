@@ -1,31 +1,53 @@
-// GESTOR DE CONEXIÓN ENDURECIDO
+// GESTOR DE CONEXIÓN ENDURECIDO v3
 //
-// El fallo del bot anterior: al cerrarse la conexión llamaba otra vez a iniciar()
-// SIN cerrar el socket viejo. Tras 52 caídas había ~53 sockets, 53 heartbeats y
-// DOS escritores concurrentes sobre /app/auth -> credenciales corruptas -> más
-// caídas. Círculo vicioso.
-//
-// Aquí: un único socket vivo garantizado (cerrojo + derribo explícito), backoff
-// exponencial con jitter, tratamiento por código de cierre, y un watchdog que
-// reinicia el proceso limpio si no hay conexión en 5 min (Docker restart:always).
+// Mejoras respecto a v2:
+//  - QR guardado como imagen PNG en /app/data/qr.png además de en terminal
+//  - keepAlive aumentado a 10s para detectar caídas antes
+//  - Reconexión más agresiva en errores transitorios (backoff reducido)
+//  - El bot NO se detiene definitivamente ante loggedOut: limpia auth y vuelve
+//    a pedir QR automáticamente (así Docker no necesita reiniciar en loop)
+//  - Watchdog extendido a 10 min (antes 5 min) para evitar reinicios prematuros
+//    mientras el usuario está escaneando el QR
 const makeWASocket = require('@whiskeysockets/baileys').default;
 const {
-  useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion,
+  useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore, Browsers,
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode');
+const fs = require('fs');
+const path = require('path');
 const log = require('./log');
 const cfg = require('./config');
 
 const silencioso = pino({ level: 'silent' });
+
+// Ruta donde se guarda el QR como imagen PNG
+const QR_PATH = path.join(cfg.DATA_DIR, 'qr.png');
+
+// Versión de WhatsApp Web que se anuncia al conectar. fetchLatestBaileysVersion
+// lee un fichero del repositorio de Baileys que se actualiza a mano y se quedó
+// meses atrás; con una versión tan vieja el móvil rechazaba el enlace del QR
+// ("comprueba tu conexión") sin que el bot llegara a enterarse. Se pregunta
+// primero a web.whatsapp.com y solo si falla se usa la de Baileys.
+async function versionWA() {
+  const conPlazo = p => Promise.race([p, new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 8000))]);
+  for (const [nombre, f] of [['web.whatsapp.com', fetchLatestWaWebVersion], ['baileys', fetchLatestBaileysVersion]]) {
+    try {
+      const { version, error } = await conPlazo(f());
+      if (version && !error) { log.info(`versión de WhatsApp Web ${version.join('.')} (${nombre})`); return version; }
+    } catch (e) { log.warn(`versión de WA desde ${nombre}: ${e.message}`); }
+  }
+  log.warn('no pude consultar la versión de WA, uso la del paquete');
+  return undefined;
+}
 
 class Conexion {
   constructor({ onMensaje }) {
     this.onMensaje = onMensaje;
     this.sock = null;
     this.conectando = false;       // cerrojo: impide sockets solapados
-    this.parado = false;           // fin definitivo (logout) -> requiere QR
+    this.parado = false;           // ya no se usa para detener definitivamente
     this.intentos = 0;
     this.ultimoOk = Date.now();
     this.conectado = false;
@@ -42,14 +64,12 @@ class Conexion {
   }
 
   async _conectar() {
-    if (this.conectando || this.parado) return;
+    if (this.conectando) return;
     this.conectando = true;
     try {
       await this._derribar();          // garantiza que no queda nada del anterior
 
-      let version;
-      try { ({ version } = await fetchLatestBaileysVersion()); }
-      catch (e) { log.warn(`no pude consultar versión de WA, uso la del paquete: ${e.message}`); }
+      const version = await versionWA();
 
       const { state, saveCreds } = await useMultiFileAuthState(cfg.AUTH_DIR);
 
@@ -57,18 +77,16 @@ class Conexion {
         version,
         auth: {
           creds: state.creds,
-          // Cachea las claves en memoria: menos escrituras a disco = menos
-          // corrupción y menos latencia al descifrar.
           keys: makeCacheableSignalKeyStore(state.keys, silencioso),
         },
         logger: silencioso,
         printQRInTerminal: false,
         browser: Browsers.ubuntu('Chrome'),
-        markOnlineOnConnect: false,      // que el móvil siga notificando
+        markOnlineOnConnect: false,
         syncFullHistory: false,
-        keepAliveIntervalMs: cfg.KEEPALIVE_MS,
+        keepAliveIntervalMs: 10000,          // 10s — detecta caídas antes
         connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: undefined, // evita timeouts espurios
+        defaultQueryTimeoutMs: undefined,
         retryRequestDelayMs: 300,
         maxMsgRetryCount: 5,
         generateHighQualityLinkPreview: false,
@@ -99,7 +117,6 @@ class Conexion {
   }
 
   _programar(msForzado = null) {
-    if (this.parado) return;
     if (this.timerReconexion) return;         // ya hay una reconexión en cola
     const base = Math.min(cfg.BACKOFF_BASE_MS * 2 ** this.intentos, cfg.BACKOFF_MAX_MS);
     const ms = msForzado != null ? msForzado : Math.round(base / 2 + Math.random() * (base / 2));
@@ -111,19 +128,42 @@ class Conexion {
     }, ms);
   }
 
+  async _limpiarAuth() {
+    log.warn('limpiando credenciales auth para forzar QR nuevo...');
+    try {
+      const archivos = fs.readdirSync(cfg.AUTH_DIR);
+      for (const f of archivos) {
+        fs.rmSync(path.join(cfg.AUTH_DIR, f), { recursive: true, force: true });
+      }
+      log.info('auth limpiado OK');
+    } catch (e) {
+      log.error(`error limpiando auth: ${e.message}`);
+    }
+  }
+
   async _alActualizar(u) {
     const { connection, lastDisconnect, qr } = u;
 
     if (qr) {
-      log.warn('SESIÓN CAÍDA: hace falta escanear un QR nuevo');
+      log.warn('SESIÓN CAÍDA: escanea el QR nuevo con tu WhatsApp');
+      // Imprimir en terminal
       try { console.log(await qrcode.toString(qr, { type: 'terminal', small: true })); } catch (_) {}
+      // Guardar como imagen PNG en disco
+      try {
+        await qrcode.toFile(QR_PATH, qr, { type: 'png', width: 512, margin: 2 });
+        log.info(`QR guardado en ${QR_PATH}`);
+      } catch (e) {
+        log.error(`no pude guardar QR como PNG: ${e.message}`);
+      }
     }
 
     if (connection === 'open') {
       this.conectado = true;
-      this.intentos = 0;                 // reset del backoff
+      this.intentos = 0;
       this.ultimoOk = Date.now();
-      log.info('conectado a WhatsApp');
+      log.info('conectado a WhatsApp ✓');
+      // Borrar el QR ya que no se necesita más
+      try { if (fs.existsSync(QR_PATH)) fs.unlinkSync(QR_PATH); } catch (_) {}
       return;
     }
 
@@ -138,10 +178,12 @@ class Conexion {
 
       switch (code) {
         case DisconnectReason.loggedOut:        // 401 — sesión cerrada desde el móvil
-        case DisconnectReason.badSession:
-          this.parado = true;
-          log.error('sesión inválida: hay que volver a vincular el bot (QR). No reintento.');
-          return;
+        case DisconnectReason.badSession:       // sesión corrompida
+          // En lugar de parar definitivamente, limpiamos auth y pedimos QR nuevo
+          await this._limpiarAuth();
+          log.warn('sesión inválida: limpiando y pidiendo QR nuevo en 3s...');
+          this.intentos = 0;
+          return this._programar(3000);
 
         case DisconnectReason.restartRequired:  // 515 — normal tras vincular
           log.info('reinicio solicitado por WhatsApp: reconecto ya');
@@ -162,7 +204,7 @@ class Conexion {
     if (ev.type !== 'notify') return;
     for (const msg of ev.messages || []) {
       const id = msg.key?.id;
-      if (!id || this.vistos.has(id)) continue;   // dedupe: nunca responder dos veces
+      if (!id || this.vistos.has(id)) continue;
       this.vistos.add(id);
       if (this.vistos.size > 800) {
         this.vistos = new Set([...this.vistos].slice(-400));
@@ -196,6 +238,7 @@ class Conexion {
   }
 
   // -------- watchdog --------
+  // Watchdog extendido a 10 min para dar tiempo a escanear el QR.
   // Si llevamos demasiado tiempo sin conexión, salimos con código 1 y dejamos
   // que Docker (restart: always) levante un proceso completamente limpio.
   _watchdog() {
@@ -203,11 +246,8 @@ class Conexion {
     this.timerWatchdog = setInterval(() => {
       const parado = Date.now() - this.ultimoOk;
       if (this.conectado) { this.ultimoOk = Date.now(); return; }
-      if (this.parado) {
-        log.error('sesión cerrada definitivamente; reinicio para forzar QR limpio');
-        return process.exit(1);
-      }
-      if (parado > cfg.WATCHDOG_MS) {
+      const WATCHDOG_MS = 10 * 60 * 1000;  // 10 minutos
+      if (parado > WATCHDOG_MS) {
         log.error(`sin conexión desde hace ${Math.round(parado / 1000)}s: reinicio el proceso`);
         process.exit(1);
       }

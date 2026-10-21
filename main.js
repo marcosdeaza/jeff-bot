@@ -10,7 +10,8 @@ const H = require('./src/horario');
 const overrides = require('./src/overrides');
 const eventos = require('./src/eventos');
 const usuarios = require('./src/usuarios');
-const tareas = require('./src/tareas');
+const agenda = require('./src/agenda');
+const agendaCmd = require('./src/agenda-cmd');
 const difusion = require('./src/difusion');
 const comandos = require('./src/comandos');
 const ia = require('./src/ia');
@@ -67,13 +68,16 @@ async function onMensaje(msg, conn) {
       texto = await ia.transcribir(buf, audio.mimetype);
     } catch (e) { log.error(`descarga de audio: ${e.message}`); }
     if (!texto) { await conn.enviar(jid, { text: 'No he entendido el audio. ¿Me lo escribes?' }); return; }
-    log.info(`   transcrito: "${texto}"`);
+    if (cfg.LOG_MENSAJES) log.info(`   transcrito: "${texto}"`);
   } else {
     texto = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
   }
   if (!texto || !texto.trim()) return;
 
-  log.info(`${quien}: ${texto.slice(0, 80)}`);
+  // Lo que cada persona le dice a Jeff es suyo: no se escribe en el registro,
+  // que puede leer cualquiera con acceso al servidor. LOG_MENSAJES=1 lo
+  // activa solo para depurar.
+  log.info(cfg.LOG_MENSAJES ? `${quien}: ${texto.slice(0, 80)}` : `mensaje de ${quien}${esAudio ? ' (audio)' : ''}`);
   await conn.escribiendo(jid);
 
   let r;
@@ -89,7 +93,11 @@ async function onMensaje(msg, conn) {
   // Un aviso de error NO entra en el historial: el modelo recibe las últimas
   // respuestas como suyas, y si ve un "algo ha fallado" lo repite creyendo que
   // es lo que toca decir. Un fallo puntual se convertía así en permanente.
-  if (!r.noGuardar) anotar(jid, texto, r.texto);
+  if (r.olvidarConversacion) {
+    sesiones.delete(jid);
+    guardarSesiones();
+    ia.olvidar(jid);
+  } else if (!r.noGuardar) anotar(jid, texto, r.texto);
   log.info(`respondido a ${quien}`);
 
   // Un cambio global avisa al resto de la clase
@@ -112,7 +120,7 @@ async function main() {
   overrides.cargar();
   eventos.cargar();
   usuarios.cargar();
-  tareas.cargar();
+  agenda.cargar();
   difusion.cargar();
   usuarios.importarDesdeMemoria(memoria);   // no perder a quien ya hablaba con el bot
 
@@ -129,11 +137,16 @@ async function main() {
   setInterval(() => {
     difusion.sincronizar();                      // recoge anuncios encolados desde fuera
     overrides.sincronizar();                     // y cambios aplicados desde administración
-    tareas.sincronizar();
     if (conn.conectado && difusion.pendientes().length) {
       difusion.procesar(conn).catch(e => log.error(`difusión: ${e.message}`));
     }
   }, 15000);
+
+  // Recordatorios, temporizadores y repaso de la noche
+  setInterval(() => {
+    agendaCmd.tick(conn).catch(e => log.error(`avisos: ${e.message}`));
+  }, 10000);
+  setInterval(() => agenda.purgar(), 3600000);
 
   // Devuelve el modelo preferente en cuanto vuelva a estar sano
   setInterval(() => {
@@ -151,13 +164,12 @@ async function main() {
   setInterval(() => {
     const e = conn.estado();
     const m = ia.estadoIA();
-    const pend = tareas.conPendientes().length;
-    log.info(`latido · ${e.conectado ? 'conectado' : 'CAÍDO'} · modelo ${m.proveedor || 'ninguno'} · usuarios ${usuarios.todos().length} · ajustes ${overrides.todos().filter(o => o.activo).length} · eventos ${eventos.todos().length} · con tareas ${pend}`);
+    log.info(`latido · ${e.conectado ? 'conectado' : 'CAÍDO'} · modelo ${m.proveedor || 'ninguno'} · usuarios ${usuarios.todos().length} · ajustes ${overrides.todos().filter(o => o.activo).length} · eventos ${eventos.todos().length} · con agenda ${agenda.todos().length}`);
   }, 3600000);
 
   const salir = async sig => {
     log.warn(`recibido ${sig}: guardando y cerrando`);
-    try { await guardarSesiones(); await overrides.guardar(); await eventos.guardar(); await usuarios.guardar(); await tareas.guardar(); await difusion.guardar(); } catch (_) {}
+    try { await guardarSesiones(); await overrides.guardar(); await eventos.guardar(); await usuarios.guardar(); await difusion.guardar(); } catch (_) {}
     process.exit(0);
   };
   process.on('SIGTERM', () => salir('SIGTERM'));

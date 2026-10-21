@@ -158,23 +158,26 @@ solo al arrancar y se aplica al reiniciar.
 
 ---
 
-## Tareas del día
+## Agenda personal
 
-Cada uno apunta lo suyo en lenguaje normal y no se pregunta alcance: nadie apunta
-sus deberes para la clase entera.
+Cada uno apunta lo suyo en lenguaje normal: tareas, notas, recordatorios y
+temporizadores. No se pregunta alcance: nadie apunta sus deberes para la clase
+entera. Las fechas habladas ("mañana a las 9", "en una hora", "cada lunes") las
+interpreta `tiempo.js` en local; el modelo solo traduce a acciones las frases
+que no encajan.
 
 Una tarea pendiente arrastra de un día para otro, porque seguir pendiente es justo
-lo que hay que recordar. Lo que se reinicia es el recuento de hechas: se guarda el
-día en que se completó cada una, así que empieza en cero cada mañana sin borrar
-nada del historial.
+lo que hay que recordar. Lo que se reinicia es el recuento de hechas: empieza en
+cero cada mañana sin borrar nada del historial.
 
 A la hora fijada en `HORA_REPASO` (21:00 por defecto) se pregunta una vez por lo
 que quede sin hacer, solo a quien tenga algo pendiente. El día del último repaso
 se guarda en disco, de modo que un reinicio a esa misma hora no lo repite.
 
-Al descartar algo, "quita álgebra" sigue siendo la asignatura y no una tarea que
-la mencione: cuando la frase nombra una asignatura del horario, solo cuenta como
-tarea si el texto coincide exactamente o se da su número.
+Cada persona tiene su propio fichero en `data/agenda/`, con nombre derivado de
+su identificador. Borrar no tiene papelera: "borra todo" quita la agenda y la
+conversación, y siempre pide confirmación antes. El registro no guarda el texto
+de los mensajes; `LOG_MENSAJES=1` lo reactiva solo para depurar.
 
 ---
 
@@ -268,13 +271,14 @@ Otros puntos pensados para tocarse:
 | `DEEPSEEK_MODEL_RESERVA` | no | Último recurso. Por defecto `deepseek-v4-pro` |
 | `IA_PRESUPUESTO_MS` | no | Techo de la consulta completa. Por defecto 20000 |
 | `HORA_REPASO` | no | Hora del repaso de tareas. Por defecto 21. Vacío lo apaga |
-| `IA_TIMEOUT_MS` | no | Plazo por consulta. Por defecto 12000 |
+| `IA_TIMEOUT_MS` | no | Plazo por consulta. Por defecto 6000 |
 | `PAUSA_MODELO_MS` | no | Cuánto queda apartado un modelo averiado. Por defecto 30 min |
 | `SONDEO_MODELO_MS` | no | Cada cuánto se comprueba si volvió. Por defecto 2 min |
 | `MODO_IA` | no | `conversacional`, `equilibrado` o `ahorro` |
 | `ADMIN_JIDS` | no | Cuentas con permisos de administración |
 | `TZ` | no | Por defecto `Europe/Madrid` |
 | `LOG_LEVEL` | no | `debug`, `info`, `warn`, `error` |
+| `LOG_MENSAJES` | no | `1` escribe en el registro lo que dice cada persona. Apagado por defecto |
 
 ---
 
@@ -367,7 +371,10 @@ src/
   horario.js         resolución de capas, fechas, carga en caliente
   overrides.js       L1 y L2: cambios con alcance
   eventos.js         L3: exámenes y avisos
-  tareas.js          tareas personales del día
+  tiempo.js          fechas y horas habladas
+  agenda.js          tareas, notas y recordatorios por persona
+  agenda-intent.js   interpretación local de la agenda
+  agenda-cmd.js      respuestas y avisos de la agenda
   usuarios.js        registro de quién usa el bot
   intent.js          interpretación local del lenguaje
   comandos.js        reparto de respuestas

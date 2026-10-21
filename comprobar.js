@@ -34,18 +34,25 @@ probar('comandos: responde una consulta local', async () => {
   if (!r || !r.texto) throw new Error('sin respuesta');
   return r.texto.split('\n')[0];
 });
-probar('tareas: apuntar, listar y completar', async () => {
-  const T = require('./src/tareas'); T.cargar();
+probar('agenda: tareas, notas, recordatorios y borrado total', async () => {
+  const A = require('./src/agenda'); A.cargar();
   const cmd = require('./src/comandos');
-  const J = 'humo-tareas@lid';
-  T.de(J).slice().forEach(t => T.descartar(J, t.id));
-  let r = await cmd.manejar(J, 'apunta probar el humo', { sesion: { historial: [] } });
-  if (!/Apuntado/.test(r.texto)) throw new Error('no apunta');
-  if (T.pendientes(J).length !== 1) throw new Error('no queda pendiente');
-  r = await cmd.manejar(J, 'ya hice probar el humo', { sesion: { historial: [] } });
-  if (T.pendientes(J).length !== 0) throw new Error('no la completa');
-  if (T.hechasHoy(J).length !== 1) throw new Error('no cuenta como hecha hoy');
-  T.de(J).slice().forEach(t => T.descartar(J, t.id));
+  const J = 'humo-agenda@lid';
+  const di = t => cmd.manejar(J, t, { sesion: { historial: [] } });
+  A.borrarTodo(J);
+  let r = await di('apunta probar el humo');
+  if (!/Apuntado/.test(r.texto) || A.pendientes(J).length !== 1) throw new Error('no apunta la tarea');
+  r = await di('hecha 1');
+  if (A.pendientes(J).length !== 0) throw new Error('no la completa');
+  r = await di('nota: prueba de humo');
+  if (A.notas(J).length !== 1) throw new Error('no guarda la nota');
+  r = await di('recuérdame en 2 horas revisar el humo');
+  if (A.recordatorios(J).length !== 1) throw new Error('no programa el aviso');
+  r = await di('borra todo');
+  r = await di('sí');
+  if (!r.olvidarConversacion || A.existe(J)) throw new Error('no lo borra todo');
+  await new Promise(res => setTimeout(res, 50));
+  if (require('fs').readdirSync(A.DIR).some(f => require('fs').readFileSync(require('path').join(A.DIR, f), 'utf8').includes(J))) throw new Error('queda rastro en disco');
   return 'ok';
 });
 probar('formato: render limpio', () => {

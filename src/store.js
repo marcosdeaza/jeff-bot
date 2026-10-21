@@ -40,4 +40,16 @@ function escribir(ruta, datos) {
   return siguiente;
 }
 
-module.exports = { leer, escribir, asegurarDir };
+// Borra un fichero DESPUÉS de cualquier escritura que tuviera en cola: si no,
+// una escritura pendiente lo volvería a crear justo después de borrarlo.
+function borrar(ruta) {
+  const previo = colas.get(ruta) || Promise.resolve();
+  const siguiente = previo.then(() => {
+    try { fs.rmSync(ruta, { force: true }); }
+    catch (e) { log.error(`store: no pude borrar ${path.basename(ruta)}: ${e.message}`); }
+  });
+  colas.set(ruta, siguiente);
+  return siguiente;
+}
+
+module.exports = { leer, escribir, borrar, asegurarDir };

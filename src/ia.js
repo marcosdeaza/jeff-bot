@@ -256,10 +256,11 @@ async function preguntar(jid, texto, opts = {}) {
   return null;
 }
 
-async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, datos = null, prov = null, limite = null } = {}) {
+async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, datos = null, prov = null, limite = null, agendaPersonal = '' } = {}) {
   const iso = H.hoyISO();
   const hora = H.horaAhora();
-  const { texto: hor, huella } = contextoHorario(jid, iso);
+  const { texto: hor, huella: huellaHorario } = contextoHorario(jid, iso);
+  const huella = huellaHorario + (agendaPersonal ? crypto.createHash('md5').update(agendaPersonal).digest('hex').slice(0, 8) : '');
 
   const P = prov || proveedores()[0];
   if (!P) return null;
@@ -275,7 +276,7 @@ async function intentarPreguntar(jid, texto, { historial = [], esAudio = false, 
   const k = clave(jid, texto, huella + (datos ? '|d' : '') + '|' + usado);
   if (!esAudio && cache.has(k)) {
     const c = cache.get(k);
-    if (Date.now() - c.t < TTL) { log.debug('respuesta desde caché'); return c.r; }
+    if (Date.now() - c.t < TTL && c.jid === jid) { log.debug('respuesta desde caché'); return c.r; }
     cache.delete(k);
   }
 
@@ -335,7 +336,17 @@ preguntan cómo, diles que escriban el cambio en lenguaje natural (p. ej. "no
 curso Álgebra" o "la VG30 no es la VG05") y Jeff preguntará si es solo para
 ellos o para todos.
 
-${datos ? `=== BORRADOR YA RESUELTO POR EL SISTEMA ===
+Además cada persona tiene su agenda privada: tareas, notas, recordatorios y
+temporizadores. Tú NO puedes crear, borrar ni marcar nada: eso lo hace el
+sistema antes de que el mensaje llegue a ti. Nunca digas que has apuntado,
+borrado o programado algo. Si te lo piden y ha llegado hasta aquí, di cómo
+escribirlo, por ejemplo: recuérdame mañana a las 9 llamar al médico, nota: ...,
+tengo que ..., mis tareas, ayuda agenda.
+
+${agendaPersonal ? `AGENDA PRIVADA DE ESTA PERSONA (úsala si pregunta por ella; no la recites sin motivo)
+${agendaPersonal}
+
+` : ''}${datos ? `=== BORRADOR YA RESUELTO POR EL SISTEMA ===
 Las horas, aulas y asignaturas de aquí abajo son la verdad: no cambies ninguna,
 no añadas clases y no quites ninguna.
 
@@ -403,7 +414,7 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
     apuntarGasto(data.usage);
     if (!r) { log.warn(`${usado}: respuesta vacía`); return { _fallo: true, esTimeout: false }; }
     r = formato.limpiarLLM(r);
-    cache.set(k, { r, t: Date.now() });
+    cache.set(k, { r, t: Date.now(), jid });
     if (cache.size > 400) cache.delete(cache.keys().next().value);
     apuntarExito();
     return r;
@@ -418,6 +429,88 @@ ${contextoCalendario(iso)} Son las ${hora} (hora de España).${esAudio ? '\nNOTA
     log.error(`${usado}: ${esTimeout ? `sin respuesta en ${plazo / 1000}s` : e.message}`);
     apartarProveedor(P, esTimeout ? 'timeout' : e.message);
     return { _fallo: true, esTimeout };
+  }
+}
+
+// Olvida las respuestas en caché de una persona (cuando pide borrar lo suyo).
+function olvidar(jid) {
+  for (const [k, v] of cache) if (v.jid === jid) cache.delete(k);
+}
+
+// TRADUCTOR DE AGENDA. Para frases sobre tareas, notas o recordatorios que el
+// intérprete local no ha sabido leer. El modelo solo devuelve acciones en
+// JSON; ejecutarlas y redactar la respuesta sigue siendo cosa del sistema, así
+// que nunca puede inventarse que ha hecho algo.
+async function interpretarAgenda(jid, texto, contexto) {
+  if (!disponible()) return null;
+  const P = proveedorEnUso();
+  if (!P) return null;
+  const ahora = new Date();
+  const iso = H.hoyISO(ahora);
+  const dia = H.DIAS[H.diaSemana(iso)];
+  const system = `Conviertes un mensaje de WhatsApp en acciones sobre la agenda personal de quien escribe.
+Responde SOLO con JSON: {"acciones":[...]}. Si el mensaje no pide nada sobre su agenda (por ejemplo, pregunta por su horario de clases, saluda o charla), responde {"acciones":[{"tipo":"ninguna"}]}.
+
+Acciones posibles:
+{"tipo":"tarea_nueva","texto":"...","para":"AAAA-MM-DD o null"}
+{"tipo":"tarea_hecha","num":N}
+{"tipo":"tarea_reabrir","num":N}
+{"tipo":"tarea_borrar","num":N}
+{"tipo":"nota_nueva","texto":"..."}
+{"tipo":"nota_borrar","num":N}
+{"tipo":"recordatorio_nuevo","texto":"...","fecha":"AAAA-MM-DD","hora":"HH:MM","repetir":null|"diario"|"laborables"|"semanal","dias":[0-6 si es semanal, 0=domingo]}
+{"tipo":"temporizador","minutos":N,"texto":"..."}
+{"tipo":"recordatorio_borrar","num":N}
+{"tipo":"listar","que":"tareas"|"notas"|"recordatorios"|"todo"}
+{"tipo":"limpiar_hechas"}
+{"tipo":"ninguna"}
+
+Reglas:
+- "num" es el número de la lista de abajo. Si no sabes cuál es, no inventes: usa "ninguna".
+- Los textos, cortos y en infinitivo o como los diría la persona ("llamar al médico"), sin la fecha ni la hora.
+- Horas en 24 h. "por la mañana" 09:00, "a mediodía" 14:00, "por la tarde" 17:00, "por la noche" 21:00. "dentro de un rato" son 30 minutos.
+- Nunca borres todo ni vacíes listas: eso no está entre las acciones.
+
+${contexto}
+
+Ahora: ${dia} ${iso}, ${H.horaAhora(ahora)} (hora de España).`;
+
+  const ctrl = new AbortController();
+  const plazo = cfg.IA_TIMEOUT_MS;
+  const to = setTimeout(() => ctrl.abort(), plazo);
+  try {
+    const t0 = Date.now();
+    const salida = await Promise.race([
+      (async () => {
+        const res = await fetch(P.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${P.clave}` },
+          body: JSON.stringify({
+            model: P.modelo, temperature: 0, max_tokens: P.razona ? 1200 : 300,
+            response_format: { type: 'json_object' },
+            messages: [{ role: 'system', content: system }, { role: 'user', content: texto }],
+          }),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) return { _http: res.status };
+        return { _datos: await res.json() };
+      })(),
+      new Promise((_, rech) => setTimeout(() => rech(Object.assign(new Error('timeout'), { esTimeout: true })), plazo + 500)),
+    ]);
+    clearTimeout(to);
+    if (salida._http) { log.warn(`agenda vía ${P.nombre}: HTTP ${salida._http}`); return null; }
+    apuntarGasto(salida._datos.usage);
+    const bruto = salida._datos.choices?.[0]?.message?.content || '';
+    const json = JSON.parse(bruto.slice(bruto.indexOf('{'), bruto.lastIndexOf('}') + 1));
+    const acciones = Array.isArray(json.acciones) ? json.acciones.filter(a => a && typeof a.tipo === 'string') : [];
+    log.info(`agenda vía ${P.nombre} ${Date.now() - t0}ms: ${acciones.map(a => a.tipo).join(', ') || 'nada'}`);
+    if (!acciones.length || acciones.every(a => a.tipo === 'ninguna')) return null;
+    return acciones.filter(a => a.tipo !== 'ninguna');
+  } catch (e) {
+    clearTimeout(to);
+    try { ctrl.abort(); } catch (_) {}
+    log.warn(`agenda vía ${P.nombre}: ${e.esTimeout ? 'sin respuesta a tiempo' : e.message}`);
+    return null;
   }
 }
 
@@ -439,4 +532,4 @@ async function transcribir(buffer, mimetype) {
   } catch (e) { log.error(`transcripción: ${e.message}`); return null; }
 }
 
-module.exports = { preguntar, transcribir, contextoHorario, cargarPersonalidad, estadoIA, probarApartados, TARIFA };
+module.exports = { preguntar, transcribir, contextoHorario, cargarPersonalidad, estadoIA, probarApartados, interpretarAgenda, olvidar, TARIFA };

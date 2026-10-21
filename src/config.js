@@ -78,6 +78,8 @@ module.exports = {
   IA_PRESUPUESTO_MS: Number(process.env.IA_PRESUPUESTO_MS || 20000),
   // Repaso de tareas al final del día (hora local 0-23). HORA_REPASO= lo apaga.
   HORA_REPASO: process.env.HORA_REPASO === '' ? null : Number(process.env.HORA_REPASO || 21),
+  // Escribir en el registro lo que dice cada persona. Apagado: es privado.
+  LOG_MENSAJES: process.env.LOG_MENSAJES === '1',
   MAX_HISTORIAL: 8,
   // Reconexión
   BACKOFF_BASE_MS: 2000,
