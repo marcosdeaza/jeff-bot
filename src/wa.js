@@ -11,7 +11,7 @@
 const makeWASocket = require('@whiskeysockets/baileys').default;
 const {
   useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, fetchLatestWaWebVersion,
-  makeCacheableSignalKeyStore, Browsers,
+  makeCacheableSignalKeyStore, Browsers, jidNormalizedUser,
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcode = require('qrcode');
@@ -214,11 +214,13 @@ class Conexion {
   }
 
   // -------- envío con reintentos --------
-  async enviar(jid, contenido, intentos = 3) {
+  // opciones va tal cual a sendMessage: en los grupos lleva { quoted } para
+  // que la respuesta salga citando el mensaje al que contesta.
+  async enviar(jid, contenido, opciones = {}, intentos = 3) {
     for (let i = 0; i < intentos; i++) {
       try {
         if (!this.sock || !this.conectado) throw new Error('sin conexión');
-        const r = await this.sock.sendMessage(jid, contenido);
+        const r = await this.sock.sendMessage(jid, contenido, opciones);
         if (r?.key?.id && contenido.text) {
           this.enviados.set(r.key.id, { conversation: contenido.text });
           if (this.enviados.size > 300) this.enviados.delete(this.enviados.keys().next().value);
@@ -231,6 +233,13 @@ class Conexion {
         await new Promise(r => setTimeout(r, 1000 * (i + 1)));
       }
     }
+  }
+
+  // Identidades del propio bot (número y lid) sin el sufijo de dispositivo,
+  // para saber en un grupo si una mención o una respuesta va con él.
+  propios() {
+    const u = this.sock?.user;
+    return new Set([u?.id, u?.lid].filter(Boolean).map(j => jidNormalizedUser(j)));
   }
 
   async escribiendo(jid) {

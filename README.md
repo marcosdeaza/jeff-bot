@@ -158,6 +158,24 @@ solo al arrancar y se aplica al reiniciar.
 
 ---
 
+## En grupos
+
+Se le puede añadir a un grupo. Ahí calla salvo que vaya con él: que lo mencionen
+con @, que respondan a un mensaje suyo o que lo llamen por su nombre ("jeff",
+"jef", como palabra suelta: "jefe" no cuenta). Quien acaba de recibir una
+pregunta suya en ese grupo puede contestarla sin volver a nombrarlo.
+
+Responde citando el mensaje y, antes de interpretarlo, quita la llamada del
+principio, así que "jeff, qué hay mañana" se entiende igual que por privado.
+Cada persona ve su horario y su agenda, los mismos que por privado. Si alguien
+lo menciona citando el mensaje de otro sin añadir nada, la pregunta es lo citado.
+
+Quien solo le habla desde grupos no se apunta como usuario, así que no recibe
+por privado los avisos de cambios de clase. Los audios de un grupo solo se
+transcriben si responden a un mensaje de Jeff.
+
+---
+
 ## Agenda personal
 
 Cada uno apunta lo suyo en lenguaje normal: tareas, notas, recordatorios y
